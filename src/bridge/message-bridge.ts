@@ -29,6 +29,7 @@ import { metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
 import type { ManagerService } from '../api/manager-service.js';
 import { buildManagerMcpServer, MANAGER_MCP_SERVER_NAME } from '../engines/claude/manager-mcp.js';
+import { prepareFinalCardStateWithAttachment } from './final-response-attachment.js';
 
 const TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const QUESTION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for user to answer
@@ -115,6 +116,15 @@ export function formatSpontaneousCardBody(snippets: string[]): string {
     lines.push(`_(${snippets.length} events coalesced; showing latest)_`);
   }
   return lines.join('\n');
+}
+
+export function canAppendMessageToRunningTask(
+  msg: IncomingMessage,
+  executionHandle: Pick<ExecutionHandle, 'enqueueUserPrompt'>,
+): boolean {
+  if (!executionHandle.enqueueUserPrompt) return false;
+  if (msg.imageKey || msg.fileKey || msg.extraMedia?.length) return false;
+  return msg.text.trim().length > 0;
 }
 
 interface PendingBatch {
@@ -1325,8 +1335,9 @@ export class MessageBridge {
       return;
     }
 
-    // If a task is running, queue the message instead of rejecting
+    // If a task is running, append text to live persistent turns; otherwise queue it.
     if (this.runningTasks.has(chatId)) {
+      const runningTask = this.runningTasks.get(chatId)!;
       // If there's a pending batch and this is a text message, merge batch into the queued text
       const batch = this.pendingBatches.get(chatId);
       if (batch && !this.isDefaultMediaText(msg)) {
@@ -1339,6 +1350,18 @@ export class MessageBridge {
         batch.messages.push(msg);
         clearTimeout(batch.timerId);
         batch.timerId = setTimeout(() => this.flushBatch(chatId), BATCH_DEBOUNCE_MS);
+        return;
+      }
+
+      if (canAppendMessageToRunningTask(msg, runningTask.executionHandle)) {
+        runningTask.executionHandle.enqueueUserPrompt!(msg.text);
+        this.logger.info({ chatId, userId: msg.userId }, 'MessageBridge: appended message to running task');
+        await this.sender.sendTextNotice(
+          chatId,
+          '📝 Added',
+          'Your message was added to the running task.',
+          'blue',
+        );
         return;
       }
 
@@ -2616,13 +2639,20 @@ export class MessageBridge {
    */
   private async sendFinalCard(messageId: string, state: CardState, chatId?: string): Promise<void> {
     // Accumulate usage into session and inject cumulative cost for display
+    let finalState = state;
     if (chatId && (state.status === 'complete' || state.status === 'error')) {
       this.sessionManager.addUsage(chatId, state.totalTokens ?? 0, state.costUsd ?? 0, state.durationMs ?? 0);
       const session = this.sessionManager.getSession(chatId);
-      state.sessionCostUsd = session.cumulativeCostUsd;
+      finalState = { ...state, sessionCostUsd: session.cumulativeCostUsd };
+      finalState = await prepareFinalCardStateWithAttachment({
+        state: finalState,
+        chatId,
+        sender: this.sender,
+        logger: this.logger,
+      });
     }
     for (let attempt = 0; attempt < FINAL_CARD_RETRIES; attempt++) {
-      const ok = await this.sender.updateCard(messageId, state);
+      const ok = await this.sender.updateCard(messageId, finalState);
       if (ok) return;
       const delay = FINAL_CARD_BASE_DELAY_MS * Math.pow(2, attempt);
       this.logger.warn({ attempt, delay, messageId }, 'Final card update failed, retrying');
@@ -2630,10 +2660,10 @@ export class MessageBridge {
     }
     if (chatId) {
       this.logger.error({ messageId, chatId }, 'All final card retries failed, sending text fallback');
-      const statusEmoji = state.status === 'complete' ? '✅' : '❌';
-      const summary = state.responseText
-        ? state.responseText.slice(0, 2000)
-        : state.errorMessage || 'Task finished';
+      const statusEmoji = finalState.status === 'complete' ? '✅' : '❌';
+      const summary = finalState.responseText
+        ? finalState.responseText.slice(0, 2000)
+        : finalState.errorMessage || 'Task finished';
       try {
         await this.sender.sendText(chatId, `${statusEmoji} ${summary}`);
       } catch { /* last resort failed */ }

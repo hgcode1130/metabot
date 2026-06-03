@@ -7,6 +7,7 @@ import type { McpSdkServerConfigWithInstance, SDKUserMessage, SpawnOptions, Spaw
 import type { BotConfigBase } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
+import { buildLarkCliGuidance } from './lark-cli-guidance.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -350,6 +351,7 @@ export class ClaudeExecutor {
       appendSections.push(
         `## MetaBot API\nYou are running as bot "${apiContext.botName}" in chat "${apiContext.chatId}".\nUse the /metabot skill for full API documentation (agent bus, scheduling, bot management).`
       );
+      appendSections.push(buildLarkCliGuidance());
 
       if (apiContext.managerToolsEnabled) {
         appendSections.push(

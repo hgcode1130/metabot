@@ -17,7 +17,8 @@
  *   - tag: 'note': deprecated in v2
  */
 import type { CardState, CardStatus } from '../types.js';
-import { parseMarkdownToBlocks, type Block } from './markdown-parser.js';
+import { responseToElements } from './card-response-elements.js';
+export { buildHelpCardV2, buildStatusCardV2, buildTextCardV2 } from './card-simple-cards-v2.js';
 
 const STATUS_CONFIG: Record<CardStatus, { color: string; title: string; icon: string }> = {
   thinking:           { color: 'blue',   title: 'Thinking...',       icon: '🔵' },
@@ -38,88 +39,11 @@ const BG_ICON: Record<'running' | 'completed' | 'failed' | 'stopped', string> = 
   stopped:   '⏹️',
 };
 
-const MAX_CONTENT_LENGTH = 28000;
 const FOOTER_FONT_SIZE   = 2;
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return text.slice(0, max) + '…';
-}
-
-function truncateContent(text: string): string {
-  if (text.length <= MAX_CONTENT_LENGTH) return text;
-  const half = Math.floor(MAX_CONTENT_LENGTH / 2) - 50;
-  return text.slice(0, half) + '\n\n... (content truncated) ...\n\n' + text.slice(-half);
-}
-
-function blockToElement(block: Block): unknown {
-  switch (block.type) {
-    case 'heading':
-      return {
-        tag: 'div',
-        text: {
-          tag:     'lark_md',
-          content: '#'.repeat(block.level) + ' ' + block.text,
-        },
-      };
-
-    case 'table': {
-      // data_type 'lark_md' (Feishu 7.10+) so `**bold**`, links, and other
-      // inline markdown inside header/cell text actually render. With
-      // 'text' the `**` syntax leaks through as literal asterisks because
-      // text columns do not parse markdown — that's why mobile table
-      // headers were rendering `**品类**` verbatim.
-      const columns = block.headers.map((h, i) => ({
-        name:             `col${i}`,
-        display_name:     h,
-        data_type:        'lark_md',
-        horizontal_align: block.align[i] ?? 'left',
-        vertical_align:   'center',
-        width:            'auto',
-      }));
-      const rows = block.rows.map((row) => {
-        const obj: Record<string, string> = {};
-        row.forEach((cell, i) => { obj[`col${i}`] = cell; });
-        return obj;
-      });
-      return {
-        tag:       'table',
-        page_size: 10,
-        row_height: 'low',
-        header_style: {
-          text_align:       'center',
-          background_style: 'grey',
-          bold:             true,
-          lines:            1,
-        },
-        columns,
-        rows,
-      };
-    }
-
-    case 'codeblock':
-      return {
-        tag:     'markdown',
-        content: '```\n' + block.code + '\n```',
-      };
-
-    case 'hr':
-      return { tag: 'hr' };
-
-    case 'markdown':
-      return {
-        tag:        'markdown',
-        content:    block.text,
-        text_align: 'left',
-      };
-  }
-}
-
-/** Split response text into blocks then map to v2 card elements */
-function responseToElements(text: string): unknown[] {
-  const truncated = truncateContent(text);
-  const blocks    = parseMarkdownToBlocks(truncated);
-  return blocks.map(blockToElement);
 }
 
 export function buildCardV2(state: CardState): string {
@@ -325,92 +249,5 @@ export function buildCardV2(state: CardState): string {
     },
   };
 
-  return JSON.stringify(card);
-}
-
-/** v2 help card */
-export function buildHelpCardV2(): string {
-  const card = {
-    schema: '2.0',
-    config: { enable_forward: true, update_multi: true },
-    header: {
-      template: 'blue',
-      title: { tag: 'plain_text', content: '📖 Help' },
-    },
-    body: {
-      direction: 'vertical',
-      elements: [
-        {
-          tag:     'markdown',
-          content: [
-            '**Available Commands:**',
-            '`/reset` - Clear session, start fresh',
-            '`/stop` - Abort current running task',
-            '`/status` - Show current session info',
-            '`/memory` - Memory document commands',
-            '`/help` - Show this help message',
-            '',
-            '**Usage:**',
-            'Send any text message to start a conversation with Claude Code.',
-            'Each chat has an independent session with a fixed working directory.',
-          ].join('\n'),
-        },
-      ],
-    },
-  };
-  return JSON.stringify(card);
-}
-
-/** v2 status card */
-export function buildStatusCardV2(
-  userId: string,
-  workingDirectory: string,
-  sessionId: string | undefined,
-  isRunning: boolean,
-): string {
-  const card = {
-    schema: '2.0',
-    config: { enable_forward: true, update_multi: true },
-    header: {
-      template: 'blue',
-      title: { tag: 'plain_text', content: '📊 Status' },
-    },
-    body: {
-      direction: 'vertical',
-      elements: [
-        {
-          tag:     'markdown',
-          content: [
-            `**User:** \`${userId}\``,
-            `**Working Directory:** \`${workingDirectory}\``,
-            `**Session:** ${sessionId ? `\`${sessionId.slice(0, 8)}...\`` : '_None_'}`,
-            `**Running:** ${isRunning ? 'Yes ⏳' : 'No'}`,
-          ].join('\n'),
-        },
-      ],
-    },
-  };
-  return JSON.stringify(card);
-}
-
-/** v2 generic text card */
-export function buildTextCardV2(title: string, content: string, color: string = 'blue'): string {
-  const card = {
-    schema: '2.0',
-    config: { enable_forward: true, update_multi: true },
-    header: {
-      template: color,
-      title: { tag: 'plain_text', content: title },
-    },
-    body: {
-      direction: 'vertical',
-      elements: [
-        {
-          tag: 'markdown',
-          content,
-        },
-      ],
-    },
-  };
   return JSON.stringify(card);
 }

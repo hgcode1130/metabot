@@ -58,7 +58,10 @@ function clearCachedMedia(chatId: string, userId: string): void {
   pendingMediaCache.delete(cacheMediaKey(chatId, userId));
 }
 
-async function isPrivateLikeGroup(chatId: string, sender: MessageSender): Promise<boolean> {
+export async function isPrivateLikeGroup(
+  chatId: string,
+  sender: Pick<MessageSender, 'getChatMemberCount'>,
+): Promise<boolean> {
   const cached = memberCountCache.get(chatId);
   if (cached && Date.now() - cached.ts < MEMBER_COUNT_CACHE_TTL_MS) {
     return cached.count === 2;
@@ -406,4 +409,3 @@ function extractTextFromPost(content: Record<string, unknown>): string {
 
   return '';
 }
-

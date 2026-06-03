@@ -1,5 +1,7 @@
 const path = require('path');
 
+const nodeInterpreter = process.env.METABOT_NODE_INTERPRETER || 'node';
+
 module.exports = {
   apps: [
     {
@@ -10,7 +12,7 @@ module.exports = {
       // .cmd shim, so PM2's child_process.spawn can't exec it on Windows
       // (EINVAL). `node --import tsx` is tsx 4.x's documented cross-platform
       // entrypoint and works identically on Linux/macOS/Windows.
-      interpreter: 'node',
+      interpreter: nodeInterpreter,
       interpreter_args: '--import tsx',
       cwd: __dirname,
 

@@ -5,6 +5,7 @@ import {
   extractSpontaneousSnippet,
   formatSpontaneousCardBody,
   resolvePersistentExecutorEnvDefault,
+  canAppendMessageToRunningTask,
 } from '../src/bridge/message-bridge.js';
 import { classifyBurstSource } from '../src/engines/claude/persistent-executor.js';
 
@@ -192,6 +193,39 @@ describe('formatSpontaneousCardBody', () => {
 
   it('returns an empty string when the snippets array is empty', () => {
     expect(formatSpontaneousCardBody([])).toBe('');
+  });
+});
+
+describe('canAppendMessageToRunningTask', () => {
+  const baseMsg = {
+    messageId: 'm1',
+    chatId: 'c1',
+    chatType: 'group',
+    userId: 'u1',
+    text: 'please also check this',
+  };
+
+  it('allows plain text when the execution handle supports live prompt injection', () => {
+    expect(canAppendMessageToRunningTask(baseMsg, { enqueueUserPrompt: () => {} })).toBe(true);
+  });
+
+  it('keeps media messages on the queued path', () => {
+    expect(canAppendMessageToRunningTask(
+      { ...baseMsg, imageKey: 'img_1' },
+      { enqueueUserPrompt: () => {} },
+    )).toBe(false);
+    expect(canAppendMessageToRunningTask(
+      { ...baseMsg, fileKey: 'file_1', fileName: 'a.txt' },
+      { enqueueUserPrompt: () => {} },
+    )).toBe(false);
+  });
+
+  it('requires execution-handle support and non-empty text', () => {
+    expect(canAppendMessageToRunningTask(baseMsg, {})).toBe(false);
+    expect(canAppendMessageToRunningTask(
+      { ...baseMsg, text: '   ' },
+      { enqueueUserPrompt: () => {} },
+    )).toBe(false);
   });
 });
 

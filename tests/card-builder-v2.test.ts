@@ -260,7 +260,7 @@ describe('buildCardV2', () => {
     expect(inner).toContain('ctx:');
   });
 
-  it('truncates long content', () => {
+  it('renders long content as a Feishu-safe preview', () => {
     const state: CardState = {
       status:       'complete',
       userPrompt:   'task',
@@ -269,7 +269,7 @@ describe('buildCardV2', () => {
     };
     const elements = findElements(JSON.parse(buildCardV2(state)));
     const md = elements.find(
-      (e) => e.tag === 'markdown' && typeof e.content === 'string' && e.content.includes('truncated'),
+      (e) => e.tag === 'markdown' && typeof e.content === 'string' && e.content.includes('Feishu-safe preview'),
     );
     expect(md).toBeDefined();
   });

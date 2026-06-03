@@ -36,6 +36,7 @@ import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
 import type { SDKMessage, TeamEvent, ApiContext, SdkMcpServers } from './executor.js';
 import { apply1MContextSettings } from './executor.js';
+import { buildLarkCliGuidance } from './lark-cli-guidance.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -385,6 +386,7 @@ export class PersistentClaudeExecutor extends EventEmitter {
       appendSections.push(
         `## MetaBot API\nYou are running as bot "${ctx.botName}" in chat "${ctx.chatId}".\nUse the /metabot skill for full API documentation (agent bus, scheduling, bot management).`,
       );
+      appendSections.push(buildLarkCliGuidance());
       if (ctx.managerToolsEnabled) {
         appendSections.push(
           [
@@ -835,6 +837,20 @@ export class PersistentClaudeExecutor extends EventEmitter {
     this.emit('spontaneous', msg);
   }
 
+  private finishActiveTurnAfterStreamEnd(reason: string): void {
+    const turn = this.activeTurn;
+    if (!turn) return;
+    turn.completed = true;
+    turn.queue.finish();
+    turn.drainResolve?.();
+    this.activeTurn = null;
+    this.options.logger.warn(
+      { turnId: turn.id, reason, continuation: !!turn.continuation },
+      'PersistentExecutor: stream ended while a turn was still active',
+    );
+    this.emit('turn-aborted', turn.id);
+  }
+
   /**
    * Background consumer: drives the SDK stream, dispatching each message
    * either to the active turn or to the spontaneous buffer. Handles clean
@@ -922,6 +938,7 @@ export class PersistentClaudeExecutor extends EventEmitter {
         }
       }
       this.options.logger.info('PersistentExecutor: stream ended cleanly');
+      this.finishActiveTurnAfterStreamEnd('stream-ended');
       this.transition('closed');
     } catch (err: any) {
       // Distinguish "we asked to shut down" (queue.finish then iterator throws

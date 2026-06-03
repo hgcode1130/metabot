@@ -173,6 +173,36 @@ describe('PersistentClaudeExecutor consumeLoop: burst dispatch', () => {
     expect(spontaneous).toHaveLength(0);
   });
 
+  it('finishes an active continuation handle if the SDK stream ends without result', async () => {
+    const exec = makeExec();
+    const taskNotifyMsg = {
+      type: 'user',
+      origin: { kind: 'task-notification' },
+      message: { role: 'user', content: 'bash done' },
+      session_id: 'sess-1',
+    };
+    const assistantMsg = {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Partial summary' }] },
+      session_id: 'sess-1',
+    };
+
+    (exec as any).rawStream = streamOf(taskNotifyMsg, assistantMsg);
+    const handles: any[] = [];
+    const abortedTurns: string[] = [];
+    exec.on('continuation-turn', (h: any) => handles.push(h));
+    exec.on('turn-aborted', (turnId: string) => abortedTurns.push(turnId));
+
+    await (exec as any).consumeLoop();
+
+    expect(handles).toHaveLength(1);
+    const collected: any[] = [];
+    for await (const m of handles[0].stream) collected.push(m);
+    expect(collected).toHaveLength(2);
+    expect((exec as any).activeTurn).toBeNull();
+    expect(abortedTurns).toEqual([handles[0].turnId]);
+  });
+
   it('opens a NEW continuation turn for a second task-notification burst after the first finishes', async () => {
     // Two background tasks settle one after another, each producing its own
     // brief burst. Each opens its own continuation card.
