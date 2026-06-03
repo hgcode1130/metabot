@@ -14,7 +14,7 @@
 
 import { EventEmitter } from 'node:events';
 import type { Logger } from '../../utils/logger.js';
-import type { TeamEvent, ApiContext } from './executor.js';
+import type { TeamEvent, ApiContext, SdkMcpServers } from './executor.js';
 import {
   PersistentClaudeExecutor,
   type PersistentExecutorOptions,
@@ -51,6 +51,8 @@ export interface AcquireOptions {
   apiContext?: ApiContext;
   /** Stable per-chat outputs directory. */
   outputsDir?: string;
+  /** In-process MCP servers exposed to the executor. */
+  mcpServers?: SdkMcpServers;
 }
 
 interface PoolEntry {
@@ -138,6 +140,7 @@ export class ExecutorRegistry extends EventEmitter {
       onTeamEvent: opts.onTeamEvent,
       apiContext: opts.apiContext,
       outputsDir: opts.outputsDir,
+      mcpServers: opts.mcpServers,
     };
     const executor = new PersistentClaudeExecutor(execOpts);
     // Auto-cleanup when executor closes for any reason

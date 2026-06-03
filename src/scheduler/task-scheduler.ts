@@ -8,6 +8,13 @@ import type { WebSocketHandle } from '../web/ws-server.js';
 import type { CardState } from '../types.js';
 import { isValidCron, nextCronOccurrence, getDefaultTimezone } from './cron-utils.js';
 
+export interface ScheduleMetadata {
+  origin?: 'api' | 'manager-mcp' | 'cli';
+  createdByBotName?: string;
+  createdByChatId?: string;
+  traceId?: string;
+}
+
 // --- One-time task types (unchanged) ---
 
 export interface ScheduledTask {
@@ -22,6 +29,7 @@ export interface ScheduledTask {
   createdAt: number;
   retryCount: number;
   parentRecurringId?: string;  // set if spawned by a recurring task
+  metadata?: ScheduleMetadata;
 }
 
 export interface ScheduleInput {
@@ -31,6 +39,7 @@ export interface ScheduleInput {
   delaySeconds: number;
   sendCards?: boolean;
   label?: string;
+  metadata?: ScheduleMetadata;
 }
 
 export interface ScheduleUpdateInput {
@@ -56,6 +65,7 @@ export interface RecurringTask {
   nextExecuteAt: number;      // Unix ms — precomputed next fire time
   lastExecutedAt?: number;    // Unix ms
   currentChildId?: string;    // ID of the currently pending/executing child task
+  metadata?: ScheduleMetadata;
 }
 
 export interface RecurringScheduleInput {
@@ -66,6 +76,7 @@ export interface RecurringScheduleInput {
   timezone?: string;
   sendCards?: boolean;
   label?: string;
+  metadata?: ScheduleMetadata;
 }
 
 export interface RecurringUpdateInput {
@@ -130,6 +141,7 @@ export class TaskScheduler {
       status: 'pending',
       createdAt: now,
       retryCount: 0,
+      metadata: input.metadata,
     };
 
     this.tasks.set(task.id, task);
@@ -208,6 +220,7 @@ export class TaskScheduler {
       status: 'active',
       createdAt: now,
       nextExecuteAt: nextMs,
+      metadata: input.metadata,
     };
 
     this.recurringTasks.set(recurring.id, recurring);
@@ -458,6 +471,7 @@ export class TaskScheduler {
       createdAt: Date.now(),
       retryCount: 0,
       parentRecurringId: recurring.id,
+      metadata: recurring.metadata,
     };
 
     this.tasks.set(child.id, child);

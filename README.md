@@ -364,6 +364,24 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 | `maxTurns` / `maxBudgetUsd` | 否 | 不限 | 执行限制 |
 | `model` | 否 | SDK 默认 | Claude 模型 |
 | `apiKey` | 否 | — | Anthropic API Key（不设则从 `~/.claude/.credentials.json` 动态读取，兼容 cc-switch） |
+| `manager.enabled` | 否 | false | 为该 Bot 启用 manager/worker MCP 工具 |
+| `manager.workers` | 否 | [] | 该 manager 可派发的本地 worker Bot 白名单 |
+| `manager.allowAllLocalWorkers` | 否 | false | 允许派发给除自己以外的所有本地 Bot |
+
+Manager 配置示例：
+
+```json
+{
+  "name": "project-manager",
+  "manager": {
+    "enabled": true,
+    "workers": ["backend-worker", "qa-worker"],
+    "maxConcurrentWorkerTasks": 4
+  }
+}
+```
+
+启用后，Claude manager 会获得 `metabot-manager` 工具：可异步派发 worker、查看状态/结果、取消任务、设置跨重启提醒。worker 默认使用隐藏的 synthetic 会话执行，不直接刷飞书聊天；每个任务都会持久化 `taskId`、`traceId`、事件时间线、费用、耗时、结果和错误，可通过 manager 工具或 `/api/manager/tasks?...` 追溯。
 
 </details>
 

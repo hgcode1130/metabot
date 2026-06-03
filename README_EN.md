@@ -367,6 +367,24 @@ Supported: text, images (Claude multimodal), files (PDF/code/docs), rich text (P
 | `maxTurns` / `maxBudgetUsd` | No | unlimited | Execution limits |
 | `model` | No | SDK default | Claude model |
 | `apiKey` | No | — | Anthropic API key (leave unset for dynamic auth via cc-switch) |
+| `manager.enabled` | No | false | Enable manager/worker MCP tools for this bot |
+| `manager.workers` | No | [] | Explicit local worker bot names this manager may delegate to |
+| `manager.allowAllLocalWorkers` | No | false | Allow all local bots except self as workers |
+
+Example manager config:
+
+```json
+{
+  "name": "project-manager",
+  "manager": {
+    "enabled": true,
+    "workers": ["backend-worker", "qa-worker"],
+    "maxConcurrentWorkerTasks": 4
+  }
+}
+```
+
+A manager-enabled Claude bot receives `metabot-manager` tools for async worker dispatch, status lookup, cancellation, and persistent reminders. Delegated tasks run in generated worker sessions, are hidden from Feishu by default, and are persisted with task IDs, trace IDs, event timelines, cost, duration, result, and error fields. Use `/api/manager/tasks?...` or the manager tools to audit what happened.
 
 </details>
 

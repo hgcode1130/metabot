@@ -3,9 +3,21 @@ name: metabot
 description: "Talk to other MetaBot bots (`mb talk` — send a message to another bot, including cross-instance peers). Use when you want to delegate to or message another bot, e.g. 'talk to bot X', '跟其他 bot 说话', 'send message to peer bot', 'ask the deploy-bot', 'delegate to bot'. Also covers bot/peer management, skill hub, voice calls."
 ---
 
+## Preferred path for manager-enabled bots
+
+If your system prompt says manager/worker tools are available, prefer the `metabot-manager` MCP tools over shelling out to `mb`:
+
+- `list_workers` — see allowed workers and their queued/running state.
+- `dispatch_worker_task` / `send_worker_prompt` — delegate independent literature research, experiments, coding, or analysis asynchronously; send follow-up prompts to the same worker session with `sessionKey`.
+- `get_worker_task` / `list_worker_tasks` — audit status, events, result, cost, duration, and errors.
+- `cancel_worker_task` / `stop_worker` — stop queued/running delegated work.
+- `schedule_reminder` / `list_reminders` / `cancel_reminder` — persistent server-side follow-ups scoped to the manager chat.
+
+These tools keep the user in one manager chat while multiple workers run in hidden synthetic sessions. Always report task IDs/trace IDs when delegating so work remains traceable.
+
 ## Quickstart — Talk to another bot
 
-Use this skill whenever you want to send a message to another MetaBot bot. The `mb` CLI is pre-installed and handles auth automatically.
+Use this skill whenever you want to send a message to another MetaBot bot and manager MCP tools are unavailable. The `mb` CLI is pre-installed and handles auth automatically.
 
 ```bash
 # Talk to a local bot

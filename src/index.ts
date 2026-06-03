@@ -18,6 +18,7 @@ import { startApiServer } from './api/http-server.js';
 import { startMemoryServer } from './memory/memory-server.js';
 import { DocSync } from './sync/doc-sync.js';
 import { MemoryClient } from './memory/memory-client.js';
+import { ManagerService } from './api/manager-service.js';
 
 import { SessionRegistry } from './session/session-registry.js';
 
@@ -193,8 +194,12 @@ async function main() {
   ];
   logger.info({ bots: allNames }, 'All bots started');
 
-  // Create task scheduler
+  // Create task scheduler and manager control-plane service
   const scheduler = new TaskScheduler(registry, logger);
+  const managerService = new ManagerService(registry, scheduler, logger);
+  for (const bot of registry.listRegistered()) {
+    bot.bridge.setManagerService(managerService);
+  }
 
   // Initialize peer manager for cross-instance bot discovery
   let peerManager: PeerManager | undefined;
@@ -287,12 +292,14 @@ async function main() {
     memoryServerUrl: appConfig.memoryServerUrl,
     memoryAuthToken: appConfig.memory.adminToken || appConfig.memory.readerToken || appConfig.memory.secret || undefined,
     sessionRegistry,
+    managerService,
   });
 
   // Graceful shutdown
   const shutdown = () => {
     logger.info('Shutting down...');
     scheduler.destroy();
+    managerService.destroy();
     if (peerManager) {
       peerManager.destroy();
     }

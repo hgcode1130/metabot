@@ -6,6 +6,13 @@ import * as path from 'node:path';
 /** Agent engine backing a bot. */
 export type EngineName = 'claude' | 'kimi' | 'codex';
 
+export interface ManagerBotConfig {
+  enabled?: boolean;
+  workers?: string[];
+  allowAllLocalWorkers?: boolean;
+  maxConcurrentWorkerTasks?: number;
+}
+
 /** Shared config fields used by MessageBridge and Executors (platform-agnostic). */
 export interface BotConfigBase {
   name: string;
@@ -17,6 +24,8 @@ export interface BotConfigBase {
   ttsVoice?: string;
   /** Agent engine. Defaults to 'claude' for backward compatibility. */
   engine?: EngineName;
+  /** Manager/worker control-plane options. Disabled unless enabled === true. */
+  manager?: ManagerBotConfig;
   claude: {
     defaultWorkingDirectory: string;
     maxTurns: number | undefined;
@@ -187,6 +196,7 @@ interface EngineJsonFields {
   engine?: EngineName;
   kimi?: KimiJsonConfig;
   codex?: CodexJsonConfig;
+  manager?: ManagerBotConfig;
 }
 
 export interface FeishuBotJsonEntry extends EngineJsonFields {
@@ -224,6 +234,7 @@ function feishuBotFromJson(entry: FeishuBotJsonEntry): BotConfig {
     ...(entry.engine ? { engine: entry.engine } : {}),
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
+    ...(entry.manager ? { manager: entry.manager } : {}),
     feishu: {
       appId: entry.feishuAppId,
       appSecret: entry.feishuAppSecret,
@@ -265,6 +276,7 @@ function telegramBotFromJson(entry: TelegramBotJsonEntry): TelegramBotConfig {
     ...(entry.engine ? { engine: entry.engine } : {}),
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
+    ...(entry.manager ? { manager: entry.manager } : {}),
     telegram: {
       botToken: entry.telegramBotToken,
     },
@@ -303,6 +315,7 @@ export function webBotFromJson(entry: WebBotJsonEntry): BotConfigBase {
     ...(entry.engine ? { engine: entry.engine } : {}),
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
+    ...(entry.manager ? { manager: entry.manager } : {}),
     claude: buildClaudeConfig(entry),
   };
 }
@@ -331,6 +344,7 @@ function wechatBotFromJson(entry: WechatBotJsonEntry): WechatBotConfig {
     ...(entry.engine ? { engine: entry.engine } : {}),
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
+    ...(entry.manager ? { manager: entry.manager } : {}),
     wechat: {
       ilinkBaseUrl: entry.ilinkBaseUrl,
       botToken: entry.wechatBotToken,

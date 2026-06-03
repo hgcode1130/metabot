@@ -10,7 +10,12 @@
       "ttsVoice": "zh_male_rap_mars_bigtts",
       "feishuAppId": "cli_xxx",
       "feishuAppSecret": "secret1",
-      "defaultWorkingDirectory": "/home/user/project-alpha"
+      "defaultWorkingDirectory": "/home/user/project-alpha",
+      "manager": {
+        "enabled": true,
+        "workers": ["project-beta", "project-gamma"],
+        "maxConcurrentWorkerTasks": 4
+      }
     },
     {
       "name": "project-beta",

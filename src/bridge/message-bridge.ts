@@ -11,8 +11,10 @@ import type {
   Executor,
   ExecutionHandle,
   EngineName,
+  SDKMessage,
   TeamEvent,
   ApiContext,
+  SdkMcpServers,
 } from '../engines/index.js';
 import { createEngine, resolveEngineName, StreamProcessor, SessionManager } from '../engines/index.js';
 import { ExecutorRegistry } from '../engines/claude/executor-registry.js';
@@ -25,6 +27,8 @@ import { OutputHandler } from './output-handler.js';
 import { CostTracker } from '../utils/cost-tracker.js';
 import { metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
+import type { ManagerService } from '../api/manager-service.js';
+import { buildManagerMcpServer, MANAGER_MCP_SERVER_NAME } from '../engines/claude/manager-mcp.js';
 
 const TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const QUESTION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for user to answer
@@ -157,6 +161,8 @@ export interface ApiTaskOptions {
   allowedTools?: string[];
   /** Called on every card state update (streaming). `final` is true on the last update. */
   onUpdate?: (state: CardState, messageId: string, final: boolean) => void;
+  /** Called for every raw engine message before CardState translation. */
+  onRawMessage?: (message: SDKMessage) => void;
   /** Called when Claude asks a question. Return the answer JSON string. */
   onQuestion?: (question: PendingQuestion) => Promise<string>;
   /** Called with output files after execution completes (before cleanup). */
@@ -255,6 +261,7 @@ export class MessageBridge {
     questions: PendingQuestion['questions'];
     cardMessageId: string;
   }>();
+  private managerService?: ManagerService;
   /** Callback for activity lifecycle events (task started/completed/failed). */
   onActivityEvent?: (event: ActivityEventData) => void;
 
@@ -285,6 +292,21 @@ export class MessageBridge {
     );
 
     this.outputHandler = new OutputHandler(logger, sender, this.outputsManager);
+  }
+
+  setManagerService(service: ManagerService): void {
+    this.managerService = service;
+  }
+
+  private buildManagerMcpServers(chatId: string): SdkMcpServers | undefined {
+    if (!this.managerService || this.config.manager?.enabled !== true) return undefined;
+    return {
+      [MANAGER_MCP_SERVER_NAME]: buildManagerMcpServer({
+        service: this.managerService,
+        scope: { managerBotName: this.config.name, managerChatId: chatId },
+        logger: this.logger,
+      }),
+    };
   }
 
   /** Emit an activity event if a listener is registered. */
@@ -374,6 +396,17 @@ export class MessageBridge {
   stopChatTask(chatId: string): boolean {
     if (!this.runningTasks.has(chatId)) return false;
     this.stopTask(chatId);
+    return true;
+  }
+
+  appendPromptToRunningTask(chatId: string, prompt: string): boolean {
+    const task = this.runningTasks.get(chatId);
+    if (!task) return false;
+    if (!task.executionHandle.enqueueUserPrompt) {
+      throw new Error('Live prompt injection is not supported by this worker engine');
+    }
+    task.executionHandle.enqueueUserPrompt(prompt);
+    this.logger.info({ chatId, promptLength: prompt.length }, 'MessageBridge: appended prompt to running task');
     return true;
   }
 
@@ -1047,6 +1080,7 @@ export class MessageBridge {
       abortController: AbortController;
       outputsDir: string;
       apiContext?: ApiContext;
+      mcpServers?: SdkMcpServers;
       model?: string;
       onTeamEvent?: (event: TeamEvent) => void;
       maxTurns?: number;
@@ -1080,6 +1114,7 @@ export class MessageBridge {
         model: opts.model,
         apiContext: opts.apiContext,
         outputsDir: opts.outputsDir,
+        mcpServers: opts.mcpServers,
       });
       // TurnHandle is structurally compatible with ExecutionHandle (stream,
       // sendAnswer, resolveQuestion, finish) — see persistent-executor.ts.
@@ -1097,6 +1132,7 @@ export class MessageBridge {
       onTeamEvent: opts.onTeamEvent,
       maxTurns: opts.maxTurns,
       allowedTools: opts.allowedTools,
+      mcpServers: opts.mcpServers,
     });
   }
 
@@ -1719,7 +1755,8 @@ export class MessageBridge {
       return;
     }
 
-    const apiContext = { botName: this.config.name, chatId };
+    const mcpServers = this.buildManagerMcpServers(chatId);
+    const apiContext = { botName: this.config.name, chatId, managerToolsEnabled: !!mcpServers };
 
     const rateLimiter = new RateLimiter(1500);
 
@@ -1755,6 +1792,7 @@ export class MessageBridge {
       abortController,
       outputsDir,
       apiContext,
+      mcpServers,
       model: session.model,
       onTeamEvent,
     });
@@ -1931,6 +1969,9 @@ export class MessageBridge {
 
         // Break on final states
         if (state.status === 'complete' || state.status === 'error') {
+          if (message.metabot_continue_after_result) {
+            continue;
+          }
           break;
         }
 
@@ -1976,7 +2017,7 @@ export class MessageBridge {
         // sessionId; without release, acquire would return the same broken
         // instance).
         const retryHandle = await this.runOneTurn(chatId, engineName, {
-          prompt, cwd, abortController, outputsDir, apiContext, model: session.model,
+          prompt, cwd, abortController, outputsDir, apiContext, mcpServers, model: session.model,
           onTeamEvent, freshSession: true,
         });
         executionHandle.finish();
@@ -1989,7 +2030,12 @@ export class MessageBridge {
           lastState = state;
           const newSid = processor.getSessionId();
           if (newSid) this.sessionManager.setSessionId(chatId, newSid, engineName);
-          if (state.status === 'complete' || state.status === 'error') break;
+          if (state.status === 'complete' || state.status === 'error') {
+            if (message.metabot_continue_after_result) {
+              continue;
+            }
+            break;
+          }
           rateLimiter.schedule(() => { this.sender.updateCard(messageId, state); });
         }
         await rateLimiter.cancelAndWait();
@@ -2003,7 +2049,7 @@ export class MessageBridge {
         await this.sender.updateCard(messageId, { ...lastState, responseText: '_Context limit reached, starting fresh session..._' });
 
         const retryHandle = await this.runOneTurn(chatId, engineName, {
-          prompt, cwd, abortController, outputsDir, apiContext, model: session.model,
+          prompt, cwd, abortController, outputsDir, apiContext, mcpServers, model: session.model,
           onTeamEvent, freshSession: true,
         });
         executionHandle.finish();
@@ -2070,7 +2116,7 @@ export class MessageBridge {
 
         try {
           const retryHandle = await this.runOneTurn(chatId, engineName, {
-            prompt, cwd, abortController, outputsDir, apiContext, model: session.model,
+            prompt, cwd, abortController, outputsDir, apiContext, mcpServers, model: session.model,
             onTeamEvent, freshSession: true,
           });
           executionHandle.finish();
@@ -2083,7 +2129,12 @@ export class MessageBridge {
             lastState = state;
             const newSid = processor.getSessionId();
             if (newSid) this.sessionManager.setSessionId(chatId, newSid, engineName);
-            if (state.status === 'complete' || state.status === 'error') break;
+            if (state.status === 'complete' || state.status === 'error') {
+              if (message.metabot_continue_after_result) {
+                continue;
+              }
+              break;
+            }
             rateLimiter.schedule(() => { this.sender.updateCard(messageId, state); });
           }
           await rateLimiter.cancelAndWait();
@@ -2199,7 +2250,14 @@ export class MessageBridge {
     const effectiveMessageId = messageId || `api-${chatId}-${Date.now()}`;
     options.onUpdate?.(initialState, effectiveMessageId, false);
 
-    const apiContext = { botName: this.config.name, chatId, groupMembers: options.groupMembers, groupId: options.groupId };
+    const mcpServers = this.buildManagerMcpServers(chatId);
+    const apiContext = {
+      botName: this.config.name,
+      chatId,
+      groupMembers: options.groupMembers,
+      groupId: options.groupId,
+      managerToolsEnabled: !!mcpServers,
+    };
 
     // Forward-declare for the onTeamEvent closure below (only assigned once;
     // const cannot be uninitialised — see same pattern in executeQuery).
@@ -2235,6 +2293,7 @@ export class MessageBridge {
       abortController,
       outputsDir,
       apiContext,
+      mcpServers,
       maxTurns: options.maxTurns,
       model: options.model ?? session.model,
       allowedTools: options.allowedTools,
@@ -2293,6 +2352,7 @@ export class MessageBridge {
       for await (const message of executionHandle.stream) {
         if (abortController.signal.aborted) break;
         resetIdleTimer();
+        options.onRawMessage?.(message);
 
         const state = processor.processMessage(message);
         if (activeGoal) state.goalCondition = activeGoal;
@@ -2377,7 +2437,7 @@ export class MessageBridge {
         }
 
         const retryHandle = await this.runOneTurn(chatId, engineName, {
-          prompt, cwd, abortController, outputsDir, apiContext,
+          prompt, cwd, abortController, outputsDir, apiContext, mcpServers,
           model: options.model ?? session.model,
           onTeamEvent, freshSession: true,
         });
@@ -2387,6 +2447,7 @@ export class MessageBridge {
         for await (const message of retryHandle.stream) {
           if (abortController.signal.aborted) break;
           resetIdleTimer();
+          options.onRawMessage?.(message);
           const state = processor.processMessage(message);
           lastState = state;
           const newSid = processor.getSessionId();
@@ -2457,7 +2518,7 @@ export class MessageBridge {
 
         try {
           const retryHandle = await this.runOneTurn(chatId, engineName, {
-            prompt, cwd, abortController, outputsDir, apiContext,
+            prompt, cwd, abortController, outputsDir, apiContext, mcpServers,
             model: options.model ?? session.model,
             onTeamEvent, freshSession: true,
           });
@@ -2467,6 +2528,7 @@ export class MessageBridge {
           for await (const message of retryHandle.stream) {
             if (abortController.signal.aborted) break;
             resetIdleTimer();
+            options.onRawMessage?.(message);
             const state = processor.processMessage(message);
             lastState = state;
             const newSid = processor.getSessionId();

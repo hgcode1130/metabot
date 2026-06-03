@@ -126,6 +126,22 @@ mb skills remove <name>                    # Unpublish
 
 **Cross-instance**: PeerManager fetches skills alongside bots during 30s polling. Peer skills appear in list/search results with `peerName`/`peerUrl` fields. Install from peer: `mb skills install <skill> <bot> peer:<peerName>`.
 
+## Manager / Worker Control Plane
+
+Manager-enabled bots (`config.manager.enabled: true`) receive an in-process `metabot-manager` MCP server during Claude execution. The manager tools are scoped to the current `{ managerBotName, managerChatId }` and support listing allowed workers, async task dispatch, status/result lookup, cancellation, and persistent reminders.
+
+**Key modules:**
+- `src/api/manager-store.ts` — SQLite/WAL task trace store under `~/.metabot/manager.db`. Persists `taskId`, `traceId`, manager/worker scope, status, timestamps, cost/duration, result/error, and append-only events.
+- `src/api/manager-service.ts` — Validates manager/worker permissions, generates filesystem-safe synthetic worker chat IDs, serializes tasks per worker session while allowing different workers to run concurrently, and wraps `TaskScheduler` for manager-owned reminders.
+- `src/engines/claude/manager-mcp.ts` — Claude Agent SDK in-process MCP tools exposed as `mcp__metabot-manager__*`.
+- `src/api/routes/manager-routes.ts` — REST audit/control surface at `/api/manager/*`.
+
+**Correctness:** manager tools are disabled unless configured; worker names must be explicitly allowlisted via `manager.workers` or `manager.allowAllLocalWorkers`; self-delegation is denied. Hidden worker tasks call the existing worker `MessageBridge.executeApiTask()` with `sendCards: false` by default so the user-facing thread stays single-manager.
+
+**Efficiency:** worker dispatch is asynchronous by default. Tasks for the same synthetic worker session are queued serially; tasks for different workers execute concurrently, enabling parallel literature review, experiments, coding, and analysis.
+
+**Traceability:** every delegated task is persisted and queryable via manager tools or REST (`GET /api/manager/tasks/:id?includeEvents=true`). On process restart, any queued/running task is marked failed with a recovery event instead of remaining as a zombie.
+
 ## Session Isolation
 
 Sessions are keyed by `chatId` (not `userId`), so each group chat and DM gets its own independent session, working directory, and conversation history. Group chats with exactly 2 members (1 user + 1 bot) are treated like DMs — no @mention required. This lets users "fork" a bot by creating multiple small group chats, each with its own session. The member count is cached for 5 minutes to avoid excessive API calls.

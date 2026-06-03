@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance, SDKUserMessage, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
 import type { BotConfigBase } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
@@ -162,6 +162,8 @@ export interface ApiContext {
   groupMembers?: string[];
   /** Group ID — used to build grouptalk chatIds for inter-bot communication. */
   groupId?: string;
+  /** Manager MCP tools are available for this bot/chat. */
+  managerToolsEnabled?: boolean;
 }
 
 /**
@@ -220,6 +222,8 @@ export type TeamEvent =
       teamName: string;
     };
 
+export type SdkMcpServers = Record<string, McpSdkServerConfigWithInstance>;
+
 export interface ExecutorOptions {
   prompt: string;
   cwd: string;
@@ -233,6 +237,8 @@ export interface ExecutorOptions {
   model?: string;
   /** Override allowed tools for this execution (empty array = no tools). */
   allowedTools?: string[];
+  /** In-process MCP servers to expose for this execution. */
+  mcpServers?: SdkMcpServers;
   /** Called whenever Claude Code fires a team coordination hook. */
   onTeamEvent?: (event: TeamEvent) => void;
 }
@@ -261,6 +267,8 @@ export type SDKMessage = {
   errors?: string[];
   // Model usage from result message (per-model breakdown)
   modelUsage?: Record<string, { inputTokens: number; outputTokens: number; contextWindow: number; costUSD: number }>;
+  /** Internal MetaBot marker: this result closes an earlier turn, but queued user prompts still belong to the same bridge task. */
+  metabot_continue_after_result?: boolean;
   // Stream event fields
   event?: {
     type: string;
@@ -289,6 +297,8 @@ export interface ExecutionHandle {
    * internal permission check short-circuits before auto-allow.
    */
   resolveQuestion(toolUseId: string, answers: Record<string, string>): void;
+  /** Enqueue an additional user prompt into the live SDK input stream, if supported by the engine. */
+  enqueueUserPrompt?(prompt: string): void;
   finish(): void;
 }
 
@@ -340,6 +350,17 @@ export class ClaudeExecutor {
       appendSections.push(
         `## MetaBot API\nYou are running as bot "${apiContext.botName}" in chat "${apiContext.chatId}".\nUse the /metabot skill for full API documentation (agent bus, scheduling, bot management).`
       );
+
+      if (apiContext.managerToolsEnabled) {
+        appendSections.push(
+          [
+            '## Manager / Worker Tools',
+            'You are a manager bot. Use the metabot-manager MCP tools to delegate independent or parallelizable work to worker bots instead of doing everything in this single chat.',
+            'Use workers for literature research, experiments, code implementation, analysis, and other tasks that can proceed in parallel. Keep the user-facing conversation in this manager chat concise: create worker tasks, check their status, summarize results, and cite task IDs for traceability.',
+            'Worker tasks are asynchronous and traceable. After dispatching, use get_worker_task or list_worker_tasks to inspect status, event history, results, cost, and errors. Use schedule_reminder for follow-ups that must survive MetaBot restarts.',
+          ].join('\n')
+        );
+      }
 
       // Agent Teams namespace guidance: the team config lives at
       // ~/.claude/teams/{name}/, which is shared across all bots and chats
@@ -405,17 +426,19 @@ export class ClaudeExecutor {
 
     const inputQueue = new AsyncQueue<SDKUserMessage>();
 
-    // Push the initial user message
-    const initialMessage: SDKUserMessage = {
+    let queuedUserPromptCount = 0;
+
+    const buildUserMessage = (text: string): SDKUserMessage => ({
       type: 'user',
       message: {
         role: 'user' as const,
-        content: prompt,
+        content: text,
       },
       parent_tool_use_id: null,
       session_id: sessionId || '',
-    };
-    inputQueue.enqueue(initialMessage);
+    });
+
+    inputQueue.enqueue(buildUserMessage(prompt));
 
     const queryOptions = this.buildQueryOptions(cwd, sessionId, abortController, outputsDir, apiContext);
     if (options.maxTurns !== undefined) {
@@ -426,6 +449,9 @@ export class ClaudeExecutor {
     }
     if (options.allowedTools !== undefined) {
       queryOptions.allowedTools = options.allowedTools;
+    }
+    if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
+      queryOptions.mcpServers = options.mcpServers;
     }
 
     apply1MContextSettings(queryOptions);
@@ -553,7 +579,13 @@ export class ClaudeExecutor {
             abortPromise,
           ]);
           if (result.done) break;
-          yield result.value as SDKMessage;
+          const msg = result.value as SDKMessage;
+          if (msg.type === 'result' && !msg.is_error && queuedUserPromptCount > 0) {
+            queuedUserPromptCount--;
+            yield { ...msg, metabot_continue_after_result: true };
+            continue;
+          }
+          yield msg;
         }
       } catch (err: any) {
         if (err.name === 'AbortError' || abortController.signal.aborted) {
@@ -610,6 +642,10 @@ export class ClaudeExecutor {
           inputQueue.enqueue(answerMessage);
         }
       },
+      enqueueUserPrompt: (nextPrompt: string) => {
+        queuedUserPromptCount++;
+        inputQueue.enqueue(buildUserMessage(nextPrompt));
+      },
       finish: () => {
         inputQueue.finish();
       },
@@ -622,6 +658,9 @@ export class ClaudeExecutor {
     this.logger.info({ cwd, hasSession: !!sessionId }, 'Starting Claude execution');
 
     const queryOptions = this.buildQueryOptions(cwd, sessionId, abortController, outputsDir);
+    if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
+      queryOptions.mcpServers = options.mcpServers;
+    }
 
     const stream = query({
       prompt,

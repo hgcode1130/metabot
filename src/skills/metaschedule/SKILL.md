@@ -5,6 +5,8 @@ description: "MetaBot's persistent server-side scheduler (cron + one-shot). Opti
 
 ## MetaBot Scheduler
 
+If manager/worker MCP tools are available in your current chat, prefer `schedule_reminder`, `list_reminders`, and `cancel_reminder`: they attach manager metadata so reminders are traceable back to the manager chat. Use this skill as the fallback CLI/API path when manager tools are unavailable.
+
 > Persistent server-side scheduler. Use this when:
 > - The schedule needs to outlive the current Claude session.
 > - Another bot or operator may need to list, pause, or cancel it.

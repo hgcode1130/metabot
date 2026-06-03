@@ -63,4 +63,5 @@ export type {
   ApiContext,
   DetectedTool,
   TeamEvent,
+  SdkMcpServers,
 } from './claude/index.js';

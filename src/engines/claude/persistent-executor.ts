@@ -34,7 +34,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage, SpawnOptions, SpawnedProcess, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
-import type { SDKMessage, TeamEvent, ApiContext } from './executor.js';
+import type { SDKMessage, TeamEvent, ApiContext, SdkMcpServers } from './executor.js';
 import { apply1MContextSettings } from './executor.js';
 
 const isWindows = process.platform === 'win32';
@@ -148,6 +148,8 @@ export interface PersistentExecutorOptions {
   spontaneousBufferLimit?: number;
   /** Called on every Agent Teams hook fire (TaskCreated/TaskCompleted/TeammateIdle). */
   onTeamEvent?: (event: TeamEvent) => void;
+  /** In-process MCP servers exposed to this long-lived executor. */
+  mcpServers?: SdkMcpServers;
 }
 
 export type ExecutorState =
@@ -195,6 +197,8 @@ export interface TurnHandle {
   sendAnswer(toolUseId: string, sessionId: string, answerText: string): void;
   /** Resolve a pending AskUserQuestion PreToolUse hook with answers. */
   resolveQuestion(toolUseId: string, answers: Record<string, string>): void;
+  /** Enqueue an additional user prompt into this live turn. */
+  enqueueUserPrompt?(prompt: string): void;
   /**
    * Compatibility shim — called by the bridge to "end" a handle. Under the
    * persistent model this is a turn-level abort (NOT executor shutdown),
@@ -224,6 +228,8 @@ interface ActiveTurn {
    * still flow through the spontaneous coalesce buffer.
    */
   continuation?: boolean;
+  /** Extra user prompts injected while this turn is running. */
+  pendingUserPrompts: number;
 }
 
 /**
@@ -356,6 +362,9 @@ export class PersistentClaudeExecutor extends EventEmitter {
       agentProgressSummaries: true,
     };
     if (this.options.model) queryOptions.model = this.options.model;
+    if (this.options.mcpServers && Object.keys(this.options.mcpServers).length > 0) {
+      queryOptions.mcpServers = this.options.mcpServers;
+    }
     // resume: prefer the most-recent observed sessionId; fall back to the
     // one supplied at construction. This way, a restart picks up the live
     // session even if the SDK forked sessionId mid-life.
@@ -376,6 +385,16 @@ export class PersistentClaudeExecutor extends EventEmitter {
       appendSections.push(
         `## MetaBot API\nYou are running as bot "${ctx.botName}" in chat "${ctx.chatId}".\nUse the /metabot skill for full API documentation (agent bus, scheduling, bot management).`,
       );
+      if (ctx.managerToolsEnabled) {
+        appendSections.push(
+          [
+            '## Manager / Worker Tools',
+            'You are a manager bot. Use the metabot-manager MCP tools to delegate independent or parallelizable work to worker bots instead of doing everything in this single chat.',
+            'Use workers for literature research, experiments, code implementation, analysis, and other tasks that can proceed in parallel. Keep the user-facing conversation in this manager chat concise: create worker tasks, check their status, summarize results, and cite task IDs for traceability.',
+            'Worker tasks are asynchronous and traceable. After dispatching, use get_worker_task or list_worker_tasks to inspect status, event history, results, cost, and errors. Use schedule_reminder for follow-ups that must survive MetaBot restarts.',
+          ].join('\n'),
+        );
+      }
       if (ctx.groupMembers && ctx.groupMembers.length > 0) {
         const others = ctx.groupMembers.filter((m) => m !== ctx.botName);
         if (ctx.groupId) {
@@ -468,7 +487,7 @@ export class PersistentClaudeExecutor extends EventEmitter {
     this.touchActivity();
     const turnId = `t${++this.turnCounter}-${Date.now().toString(36)}`;
     const queue = new AsyncQueue<SDKMessage>();
-    const turn: ActiveTurn = { id: turnId, queue, detached: false, completed: false };
+    const turn: ActiveTurn = { id: turnId, queue, detached: false, completed: false, pendingUserPrompts: 0 };
     this.activeTurn = turn;
 
     const userMsg: SDKUserMessage = {
@@ -523,6 +542,10 @@ export class PersistentClaudeExecutor extends EventEmitter {
       },
       resolveQuestion: (toolUseId: string, answers: Record<string, string>) => {
         this.resolveQuestion(toolUseId, answers);
+      },
+      enqueueUserPrompt: (nextPrompt: string) => {
+        turn.pendingUserPrompts++;
+        this.enqueueUserPrompt(nextPrompt);
       },
       finish: () => {
         // Turn-level finish in the persistent model = abort the current turn.
@@ -580,6 +603,10 @@ export class PersistentClaudeExecutor extends EventEmitter {
       },
       resolveQuestion: (toolUseId: string, answers: Record<string, string>) => {
         this.resolveQuestion(toolUseId, answers);
+      },
+      enqueueUserPrompt: (nextPrompt: string) => {
+        turn.pendingUserPrompts++;
+        this.enqueueUserPrompt(nextPrompt);
       },
       finish: () => { void abort(); },
     };
@@ -787,6 +814,17 @@ export class PersistentClaudeExecutor extends EventEmitter {
     this.inputQueue.enqueue(msg);
   }
 
+  private enqueueUserPrompt(prompt: string): void {
+    const msg: SDKUserMessage = {
+      type: 'user',
+      message: { role: 'user' as const, content: prompt },
+      parent_tool_use_id: null,
+      session_id: this.sessionId || '',
+    };
+    this.inputQueue.enqueue(msg);
+    this.touchActivity();
+  }
+
   private pushSpontaneous(msg: SDKMessage): void {
     const limit = this.options.spontaneousBufferLimit ?? DEFAULT_SPONTANEOUS_LIMIT;
     if (limit > 0 && this.spontaneousBuffer.length >= limit) {
@@ -825,8 +863,13 @@ export class PersistentClaudeExecutor extends EventEmitter {
         if (turn) {
           if (!turn.detached) {
             // Normal in-flight turn: forward the message to the listener.
-            turn.queue.enqueue(msg);
             if (msg.type === 'result') {
+              if (!msg.is_error && turn.pendingUserPrompts > 0) {
+                turn.pendingUserPrompts--;
+                turn.queue.enqueue({ ...msg, metabot_continue_after_result: true });
+                continue;
+              }
+              turn.queue.enqueue(msg);
               turn.completed = true;
               turn.queue.finish();
               this.activeTurn = null;
@@ -836,6 +879,8 @@ export class PersistentClaudeExecutor extends EventEmitter {
               );
               this.emit('turn-completed', turn.id);
               this.armIdleTimer();
+            } else {
+              turn.queue.enqueue(msg);
             }
           } else {
             // Aborted turn: drain SDK output silently until terminal result.
@@ -860,6 +905,7 @@ export class PersistentClaudeExecutor extends EventEmitter {
             detached: false,
             completed: false,
             continuation: true,
+            pendingUserPrompts: 0,
           };
           this.activeTurn = continuationTurn;
           // The opening user message is part of the burst — push it through

@@ -20,6 +20,7 @@ import { ActivityStore } from './activity-store.js';
 import { SkillHubStore } from './skill-hub-store.js';
 import { metrics as _metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
+import type { ManagerService } from './manager-service.js';
 import {
   jsonResponse,
   handleVoiceRoutes,
@@ -32,6 +33,7 @@ import {
   handleSessionRoutes,
   handleSkillHubRoutes,
   handleExecutorRoutes,
+  handleManagerRoutes,
 } from './routes/index.js';
 import type { RouteContext } from './routes/index.js';
 
@@ -51,6 +53,7 @@ interface ApiServerOptions {
   budgetManager?: BudgetManager;
   teamManager?: TeamManager;
   sessionRegistry?: SessionRegistry;
+  managerService?: ManagerService;
 }
 
 const startTime = Date.now();
@@ -89,6 +92,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     sessionRegistry: options.sessionRegistry,
     activityStore,
     skillHubStore,
+    managerService: options.managerService,
   };
 
   // Route handlers in priority order
@@ -103,6 +107,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     handleSessionRoutes,
     handleSkillHubRoutes,
     handleExecutorRoutes,
+    handleManagerRoutes,
   ];
 
   const server = http.createServer(async (req, res) => {

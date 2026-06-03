@@ -31,5 +31,6 @@ export type {
   ExecutorOptions,
   ApiContext,
   TeamEvent,
+  SdkMcpServers,
 } from './executor.js';
 export type { DetectedTool } from './stream-processor.js';

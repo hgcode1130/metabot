@@ -263,6 +263,7 @@ export async function handleTaskRoutes(
         chatId: recurring.chatId, prompt: recurring.prompt, cronExpr: recurring.cronExpr,
         timezone: recurring.timezone, nextExecuteAt: new Date(recurring.nextExecuteAt).toISOString(),
         sendCards: recurring.sendCards, label: recurring.label, status: recurring.status,
+        ...(recurring.metadata ? { metadata: recurring.metadata } : {}),
       });
     } else if (typeof delaySeconds === 'number' && delaySeconds > 0) {
       const task = scheduler.scheduleTask({ botName, chatId, prompt, delaySeconds, sendCards, label });
@@ -270,6 +271,7 @@ export async function handleTaskRoutes(
         id: task.id, type: 'one-time', botName: task.botName, chatId: task.chatId,
         prompt: task.prompt, executeAt: new Date(task.executeAt).toISOString(),
         sendCards: task.sendCards, label: task.label, status: task.status,
+        ...(task.metadata ? { metadata: task.metadata } : {}),
       });
     } else {
       jsonResponse(res, 400, { error: 'Provide either cronExpr (recurring) or delaySeconds (one-time, positive number)' });
@@ -283,6 +285,7 @@ export async function handleTaskRoutes(
       id: t.id, type: 'one-time', botName: t.botName, chatId: t.chatId,
       prompt: t.prompt, executeAt: new Date(t.executeAt).toISOString(),
       sendCards: t.sendCards, label: t.label, status: t.status, createdAt: new Date(t.createdAt).toISOString(),
+      ...(t.metadata ? { metadata: t.metadata } : {}),
     }));
     const recurringTasks = scheduler.listRecurringTasks().map((r) => ({
       id: r.id, type: 'recurring', botName: r.botName, chatId: r.chatId,
@@ -290,6 +293,7 @@ export async function handleTaskRoutes(
       nextExecuteAt: new Date(r.nextExecuteAt).toISOString(),
       lastExecutedAt: r.lastExecutedAt ? new Date(r.lastExecutedAt).toISOString() : null,
       sendCards: r.sendCards, label: r.label, status: r.status, createdAt: new Date(r.createdAt).toISOString(),
+      ...(r.metadata ? { metadata: r.metadata } : {}),
     }));
     jsonResponse(res, 200, { tasks, recurringTasks });
     return true;
@@ -338,6 +342,7 @@ export async function handleTaskRoutes(
         id: updated.id, type: 'one-time', botName: updated.botName, chatId: updated.chatId,
         prompt: updated.prompt, executeAt: new Date(updated.executeAt).toISOString(),
         sendCards: updated.sendCards, label: updated.label, status: updated.status,
+        ...(updated.metadata ? { metadata: updated.metadata } : {}),
       });
       return true;
     }
@@ -357,6 +362,7 @@ export async function handleTaskRoutes(
         cronExpr: updatedRecurring.cronExpr, timezone: updatedRecurring.timezone,
         nextExecuteAt: new Date(updatedRecurring.nextExecuteAt).toISOString(),
         sendCards: updatedRecurring.sendCards, label: updatedRecurring.label, status: updatedRecurring.status,
+        ...(updatedRecurring.metadata ? { metadata: updatedRecurring.metadata } : {}),
       });
       return true;
     }
