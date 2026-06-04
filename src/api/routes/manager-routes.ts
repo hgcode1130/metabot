@@ -1,4 +1,5 @@
 import type * as http from 'node:http';
+import { WORKER_TASK_TEMPLATES, type WorkerTaskTemplate } from '../manager-worker-template.js';
 import type { ManagerScope, ManagerTaskDetails, ManagerReminder } from '../manager-service.js';
 import type { ManagerTask, ManagerTaskEvent, ManagerTaskStatus } from '../manager-store.js';
 import type { RouteContext } from './types.js';
@@ -41,6 +42,9 @@ export async function handleManagerRoutes(
         prompt,
         label: optionalString(body.label),
         sessionKey: optionalString(body.sessionKey),
+        taskTemplate: optionalTaskTemplate(body.taskTemplate),
+        relatedTaskId: optionalString(body.relatedTaskId),
+        workflowId: optionalString(body.workflowId),
         sendCards: optionalBoolean(body.sendCards),
         waitTimeoutSeconds: optionalNumber(body.waitTimeoutSeconds),
         metadata: optionalObject(body.metadata),
@@ -190,6 +194,14 @@ function optionalNumber(value: unknown): number | undefined {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) throw Object.assign(new Error('Expected a number'), { statusCode: 400 });
   return parsed;
+}
+
+function optionalTaskTemplate(value: unknown): WorkerTaskTemplate | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !(WORKER_TASK_TEMPLATES as readonly string[]).includes(value)) {
+    throw Object.assign(new Error(`Invalid taskTemplate: ${String(value)}`), { statusCode: 400 });
+  }
+  return value as WorkerTaskTemplate;
 }
 
 function optionalObject(value: unknown): Record<string, unknown> | undefined {

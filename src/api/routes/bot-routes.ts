@@ -84,12 +84,17 @@ export async function handleBotRoutes(
       }
       entry = {
         name, ...(body.description ? { description: body.description } : {}),
+        ...(body.specialties ? { specialties: body.specialties } : {}),
+        ...(body.icon ? { icon: body.icon } : {}),
+        ...(typeof body.groupNoMention === 'boolean' ? { groupNoMention: body.groupNoMention } : {}),
         ...(body.engine ? { engine: body.engine } : {}),
         ...(body.codex ? { codex: body.codex } : {}),
         ...(body.kimi ? { kimi: body.kimi } : {}),
+        ...(body.manager ? { manager: body.manager } : {}),
+        ...(body.persistentExecutor ? { persistentExecutor: body.persistentExecutor } : {}),
         feishuAppId: appId, feishuAppSecret: appSecret, defaultWorkingDirectory: workDir,
-        ...(body.maxTurns ? { maxTurns: body.maxTurns } : {}),
-        ...(body.maxBudgetUsd ? { maxBudgetUsd: body.maxBudgetUsd } : {}),
+        ...(body.maxTurns != null ? { maxTurns: body.maxTurns } : {}),
+        ...(body.maxBudgetUsd != null ? { maxBudgetUsd: body.maxBudgetUsd } : {}),
         ...(body.model ? { model: body.model } : {}),
       };
     } else if (platform === 'telegram') {
@@ -101,12 +106,16 @@ export async function handleBotRoutes(
       }
       entry = {
         name, ...(body.description ? { description: body.description } : {}),
+        ...(body.specialties ? { specialties: body.specialties } : {}),
+        ...(body.icon ? { icon: body.icon } : {}),
         ...(body.engine ? { engine: body.engine } : {}),
         ...(body.codex ? { codex: body.codex } : {}),
         ...(body.kimi ? { kimi: body.kimi } : {}),
+        ...(body.manager ? { manager: body.manager } : {}),
+        ...(body.persistentExecutor ? { persistentExecutor: body.persistentExecutor } : {}),
         telegramBotToken: token, defaultWorkingDirectory: workDir,
-        ...(body.maxTurns ? { maxTurns: body.maxTurns } : {}),
-        ...(body.maxBudgetUsd ? { maxBudgetUsd: body.maxBudgetUsd } : {}),
+        ...(body.maxTurns != null ? { maxTurns: body.maxTurns } : {}),
+        ...(body.maxBudgetUsd != null ? { maxBudgetUsd: body.maxBudgetUsd } : {}),
         ...(body.model ? { model: body.model } : {}),
       };
     } else {
@@ -117,12 +126,16 @@ export async function handleBotRoutes(
       }
       entry = {
         name, ...(body.description ? { description: body.description } : {}),
+        ...(body.specialties ? { specialties: body.specialties } : {}),
+        ...(body.icon ? { icon: body.icon } : {}),
         ...(body.engine ? { engine: body.engine } : {}),
         ...(body.codex ? { codex: body.codex } : {}),
         ...(body.kimi ? { kimi: body.kimi } : {}),
+        ...(body.manager ? { manager: body.manager } : {}),
+        ...(body.persistentExecutor ? { persistentExecutor: body.persistentExecutor } : {}),
         defaultWorkingDirectory: workDir,
-        ...(body.maxTurns ? { maxTurns: body.maxTurns } : {}),
-        ...(body.maxBudgetUsd ? { maxBudgetUsd: body.maxBudgetUsd } : {}),
+        ...(body.maxTurns != null ? { maxTurns: body.maxTurns } : {}),
+        ...(body.maxBudgetUsd != null ? { maxBudgetUsd: body.maxBudgetUsd } : {}),
         ...(body.model ? { model: body.model } : {}),
       };
     }
@@ -157,6 +170,8 @@ export async function handleBotRoutes(
     } catch (err: any) {
       if (err.message?.includes('already exists')) {
         jsonResponse(res, 409, { error: err.message });
+      } else if (err.message?.includes('validation failed')) {
+        jsonResponse(res, 400, { error: err.message });
       } else {
         throw err;
       }

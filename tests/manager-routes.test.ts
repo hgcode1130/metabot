@@ -55,17 +55,24 @@ describe('manager routes', () => {
     expect(svc.listWorkers).toHaveBeenCalledWith({ managerBotName: 'manager', managerChatId: 'chat-a' });
   });
 
-  it('dispatches worker tasks', async () => {
+  it('dispatches worker tasks with template and trace-link fields', async () => {
     const svc = service();
     const out = res();
     await handleManagerRoutes(ctx(svc), req({
       managerBotName: 'manager', managerChatId: 'chat-a', workerBotName: 'worker-a', prompt: 'do it',
+      taskTemplate: 'review', relatedTaskId: 'mgrtask-related', workflowId: 'wf-1',
     }), out, 'POST', '/api/manager/tasks');
     expect(out.statusCode).toBe(201);
     expect(out.body.task.id).toBe('mgrtask-1');
     expect(svc.dispatchTask).toHaveBeenCalledWith(
       { managerBotName: 'manager', managerChatId: 'chat-a' },
-      expect.objectContaining({ workerBotName: 'worker-a', prompt: 'do it' }),
+      expect.objectContaining({
+        workerBotName: 'worker-a',
+        prompt: 'do it',
+        taskTemplate: 'review',
+        relatedTaskId: 'mgrtask-related',
+        workflowId: 'wf-1',
+      }),
     );
   });
 
