@@ -4,7 +4,7 @@
       "name": "research-manager",
       "description": "Single user-facing research manager bot that coordinates hidden workers",
       "specialties": ["planning", "delegation", "research-management", "review", "summary"],
-      "groupNoMention": true,
+      "groupNoMention": false,
       "feishuAppId": "cli_manager_example",
       "feishuAppSecret": "manager-secret-example",
       "defaultWorkingDirectory": "/home/user/research-project",

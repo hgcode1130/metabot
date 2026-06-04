@@ -176,14 +176,22 @@ export async function handleBotRoutes(
       return true;
     }
     const body = await parseJsonBody(req);
-    const updated = updateBot(botsConfigPath, name, body);
-    if (!updated) {
-      jsonResponse(res, 404, { error: `Bot not found: ${name}` });
-      return true;
+    try {
+      const updated = updateBot(botsConfigPath, name, body);
+      if (!updated) {
+        jsonResponse(res, 404, { error: `Bot not found: ${name}` });
+        return true;
+      }
+      logger.info({ name, updates: Object.keys(body) }, 'Bot config updated');
+      ws.handle?.broadcastBotList();
+      jsonResponse(res, 200, { name, updated: true });
+    } catch (err: any) {
+      if (err.message?.includes('validation failed')) {
+        jsonResponse(res, 400, { error: err.message });
+      } else {
+        throw err;
+      }
     }
-    logger.info({ name, updates: Object.keys(body) }, 'Bot config updated');
-    ws.handle?.broadcastBotList();
-    jsonResponse(res, 200, { name, updated: true });
     return true;
   }
 
