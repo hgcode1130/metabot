@@ -29,7 +29,11 @@ import { metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
 import type { ManagerService } from '../api/manager-service.js';
 import { buildManagerMcpServer, MANAGER_MCP_SERVER_NAME } from '../engines/claude/manager-mcp.js';
-import { prepareFinalCardStateWithAttachment } from './final-response-attachment.js';
+import {
+  prepareFinalCardStatePreview,
+  sendFinalResponseAttachment,
+} from './final-response-attachment.js';
+import { buildAppendedPromptCardState } from './appended-prompt-state.js';
 
 const TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const QUESTION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for user to answer
@@ -1355,11 +1359,19 @@ export class MessageBridge {
 
       if (canAppendMessageToRunningTask(msg, runningTask.executionHandle)) {
         runningTask.executionHandle.enqueueUserPrompt!(msg.text);
+        const appendedState = buildAppendedPromptCardState({
+          state: runningTask.processor.getCurrentState(),
+          teamState: runningTask.teamState,
+          prompt: msg.text,
+        });
+        runningTask.rateLimiter.schedule(() => {
+          this.sender.updateCard(runningTask.cardMessageId, appendedState);
+        });
         this.logger.info({ chatId, userId: msg.userId }, 'MessageBridge: appended message to running task');
         await this.sender.sendTextNotice(
           chatId,
           '📝 Added',
-          'Your message was added to the running task.',
+          'Your message was added to the current task. The final result will update the same card.',
           'blue',
         );
         return;
@@ -2640,20 +2652,20 @@ export class MessageBridge {
   private async sendFinalCard(messageId: string, state: CardState, chatId?: string): Promise<void> {
     // Accumulate usage into session and inject cumulative cost for display
     let finalState = state;
+    let fullResponseText: string | undefined;
     if (chatId && (state.status === 'complete' || state.status === 'error')) {
       this.sessionManager.addUsage(chatId, state.totalTokens ?? 0, state.costUsd ?? 0, state.durationMs ?? 0);
       const session = this.sessionManager.getSession(chatId);
       finalState = { ...state, sessionCostUsd: session.cumulativeCostUsd };
-      finalState = await prepareFinalCardStateWithAttachment({
-        state: finalState,
-        chatId,
-        sender: this.sender,
-        logger: this.logger,
-      });
+      fullResponseText = finalState.responseText;
+      finalState = prepareFinalCardStatePreview(finalState);
     }
     for (let attempt = 0; attempt < FINAL_CARD_RETRIES; attempt++) {
       const ok = await this.sender.updateCard(messageId, finalState);
-      if (ok) return;
+      if (ok) {
+        this.sendFullResponseAttachmentLater(chatId, fullResponseText);
+        return;
+      }
       const delay = FINAL_CARD_BASE_DELAY_MS * Math.pow(2, attempt);
       this.logger.warn({ attempt, delay, messageId }, 'Final card update failed, retrying');
       await new Promise((r) => setTimeout(r, delay));
@@ -2667,7 +2679,20 @@ export class MessageBridge {
       try {
         await this.sender.sendText(chatId, `${statusEmoji} ${summary}`);
       } catch { /* last resort failed */ }
+      this.sendFullResponseAttachmentLater(chatId, fullResponseText);
     }
+  }
+
+  private sendFullResponseAttachmentLater(chatId: string | undefined, responseText: string | undefined): void {
+    if (!chatId || !responseText) return;
+    void sendFinalResponseAttachment({
+      responseText,
+      chatId,
+      sender: this.sender,
+      logger: this.logger,
+    }).catch((err) => {
+      this.logger.error({ err, chatId }, 'Full response attachment worker failed');
+    });
   }
 
   /**

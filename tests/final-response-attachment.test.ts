@@ -1,7 +1,10 @@
 import * as fsPromises from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import type { CardState } from '../src/types.js';
-import { prepareFinalCardStateWithAttachment } from '../src/bridge/final-response-attachment.js';
+import {
+  prepareFinalCardStatePreview,
+  sendFinalResponseAttachment,
+} from '../src/bridge/final-response-attachment.js';
 
 const logger = {
   debug: vi.fn(),
@@ -19,28 +22,33 @@ function completeState(responseText: string): CardState {
   };
 }
 
-function sender(sendLocalFile: any) {
+function sender(sendLocalFile: any, sendTextNotice: any = vi.fn()) {
   return {
     sendLocalFile,
+    sendTextNotice,
   } as any;
 }
 
-describe('prepareFinalCardStateWithAttachment', () => {
+describe('final response attachment handling', () => {
   it('leaves small responses inline and does not upload a file', async () => {
     const sendLocalFile = vi.fn();
     const state = completeState('short answer');
-    const prepared = await prepareFinalCardStateWithAttachment({
-      state,
-      chatId: 'oc_small',
-      sender: sender(sendLocalFile),
-      logger,
-    });
+    const prepared = prepareFinalCardStatePreview(state);
 
     expect(prepared).toBe(state);
     expect(sendLocalFile).not.toHaveBeenCalled();
   });
 
-  it('uploads the full response and replaces card text with an explicit preview', async () => {
+  it('builds the final card preview without waiting for file upload', () => {
+    const full = 'x'.repeat(13_000);
+    const state = completeState(full);
+    const prepared = prepareFinalCardStatePreview(state);
+
+    expect(prepared.responseText).toContain('Response shortened for Feishu card limits');
+    expect(prepared.responseText.length).toBeLessThan(full.length);
+  });
+
+  it('sends the full response attachment separately', async () => {
     const full = 'x'.repeat(13_000);
     let uploadedContent = '';
     const sendLocalFile = vi.fn(async (_chatId: string, filePath: string) => {
@@ -48,30 +56,47 @@ describe('prepareFinalCardStateWithAttachment', () => {
       return true;
     });
 
-    const prepared = await prepareFinalCardStateWithAttachment({
-      state: completeState(full),
-      chatId: 'oc_big',
+    await sendFinalResponseAttachment({
+      responseText: full,
+      chatId: 'oc_later',
       sender: sender(sendLocalFile),
       logger,
     });
 
     expect(sendLocalFile).toHaveBeenCalledOnce();
     expect(uploadedContent).toBe(full);
-    expect(prepared.responseText).toContain('Full response attached');
-    expect(prepared.responseText.length).toBeLessThan(full.length);
   });
 
-  it('surfaces attachment upload failure in the card preview', async () => {
-    const full = 'x'.repeat(13_000);
-    const sendLocalFile = vi.fn(async () => false);
-    const prepared = await prepareFinalCardStateWithAttachment({
-      state: completeState(full),
-      chatId: 'oc_fail',
+  it('does not send an attachment for responses that fit in the card', async () => {
+    const sendLocalFile = vi.fn();
+    await sendFinalResponseAttachment({
+      responseText: 'short answer',
+      chatId: 'oc_short',
       sender: sender(sendLocalFile),
       logger,
     });
 
+    expect(sendLocalFile).not.toHaveBeenCalled();
+  });
+
+  it('notifies the user when attachment upload fails', async () => {
+    const full = 'x'.repeat(13_000);
+    const sendLocalFile = vi.fn(async () => false);
+    const sendTextNotice = vi.fn();
+
+    await sendFinalResponseAttachment({
+      responseText: full,
+      chatId: 'oc_fail',
+      sender: sender(sendLocalFile, sendTextNotice),
+      logger,
+    });
+
     expect(sendLocalFile).toHaveBeenCalledOnce();
-    expect(prepared.responseText).toContain('attachment upload failed');
+    expect(sendTextNotice).toHaveBeenCalledWith(
+      'oc_fail',
+      '⚠️ Attachment Failed',
+      expect.stringContaining('uploading the full-response attachment failed'),
+      'orange',
+    );
   });
 });
