@@ -8,6 +8,7 @@ import type { BotConfigBase } from '../../config.js';
 import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
 import { buildLarkCliGuidance } from './lark-cli-guidance.js';
+import { buildManagerWorkerGuidance } from './manager-worker-guidance.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -354,14 +355,7 @@ export class ClaudeExecutor {
       appendSections.push(buildLarkCliGuidance());
 
       if (apiContext.managerToolsEnabled) {
-        appendSections.push(
-          [
-            '## Manager / Worker Tools',
-            'You are a manager bot. Use the metabot-manager MCP tools to delegate independent or parallelizable work to worker bots instead of doing everything in this single chat.',
-            'Use workers for literature research, experiments, code implementation, analysis, and other tasks that can proceed in parallel. Keep the user-facing conversation in this manager chat concise: create worker tasks, check their status, summarize results, and cite task IDs for traceability.',
-            'Worker tasks are asynchronous and traceable. After dispatching, use get_worker_task or list_worker_tasks to inspect status, event history, results, cost, and errors. Use schedule_reminder for follow-ups that must survive MetaBot restarts.',
-          ].join('\n')
-        );
+        appendSections.push(buildManagerWorkerGuidance());
       }
 
       // Agent Teams namespace guidance: the team config lives at
