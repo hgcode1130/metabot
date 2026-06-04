@@ -218,16 +218,35 @@ export class ManagerService {
       return { mode: 'dispatched', task };
     }
 
-    const attached = worker.bridge.appendPromptToRunningTask(workerChatId, input.prompt);
+    const followUpPrompt = shouldWrapFollowUpPrompt(input)
+      ? buildWorkerTaskPrompt({
+          prompt: input.prompt,
+          taskTemplate: input.taskTemplate,
+          taskId: running.id,
+          traceId: running.traceId,
+          managerBotName: running.managerBotName,
+          workerBotName: running.workerBotName,
+          label: input.label ?? running.label,
+          relatedTaskId: input.relatedTaskId,
+          workflowId: input.workflowId,
+        })
+      : input.prompt;
+
+    const attached = worker.bridge.appendPromptToRunningTask(workerChatId, followUpPrompt);
     if (!attached) {
       throw new Error(`Running worker task is not active in this process: ${running.id}`);
     }
     this.store.appendEvent(running.id, 'prompt_sent', {
       prompt: input.prompt,
       promptLength: input.prompt.length,
+      deliveredPromptLength: followUpPrompt.length,
       sessionKey: input.sessionKey ?? DEFAULT_SESSION_KEY,
+      ...(input.taskTemplate ? { taskTemplate: normalizeWorkerTaskTemplate(input.taskTemplate) } : {}),
+      ...(input.relatedTaskId ? { relatedTaskId: input.relatedTaskId } : {}),
+      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
+      ...(followUpPrompt !== input.prompt ? { outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION } : {}),
     });
-    return { mode: 'attached', task: this.store.getTask(running.id) ?? running, prompt: input.prompt };
+    return { mode: 'attached', task: this.store.getTask(running.id) ?? running, prompt: followUpPrompt };
   }
 
   getTask(scope: ManagerScope, taskId: string, options: GetTaskOptions = {}): ManagerTaskDetails | undefined {
@@ -618,6 +637,10 @@ export function buildWorkerChatId(scope: ManagerScope, workerBotName: string, se
     .digest('hex')
     .slice(0, 32);
   return `manager-worker-${digest}`;
+}
+
+function shouldWrapFollowUpPrompt(input: DispatchTaskInput): boolean {
+  return !!(input.taskTemplate || input.relatedTaskId || input.workflowId);
 }
 
 function normalizeWaitTimeoutSeconds(waitTimeoutSeconds: number | undefined): number {

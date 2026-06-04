@@ -380,8 +380,53 @@ describe('ManagerService', () => {
 
     expect(result.mode).toBe('attached');
     expect(worker.bridge.appendPromptToRunningTask).toHaveBeenCalledWith(task.workerChatId, 'add this constraint');
+    expect(result.prompt).toBe('add this constraint');
     expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('prompt_sent');
+
+    workerResult.resolve({ success: true, responseText: 'done' });
+    await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
+  });
+
+  it('wraps attached prompts when follow-up template metadata is provided', async () => {
+    const workerResult = deferred<ApiTaskResult>();
+    const executeApiTask = vi.fn((_options: ApiTaskOptions) => workerResult.promise);
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'slow work',
+      sessionKey: 'research',
+    });
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
+
+    const result = await managerService.sendWorkerPrompt(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'review this implementation',
+      sessionKey: 'research',
+      taskTemplate: 'review',
+      relatedTaskId: task.id,
+      workflowId: 'wf-1',
+    });
+
+    expect(result.mode).toBe('attached');
+    const deliveredPrompt = (worker.bridge.appendPromptToRunningTask as any).mock.calls.at(-1)[1];
+    expect(deliveredPrompt).toContain('Template: review');
+    expect(deliveredPrompt).toContain(`Related task ID: ${task.id}`);
+    expect(deliveredPrompt).toContain('Workflow ID: wf-1');
+    expect(deliveredPrompt).toContain('Treat this as a read-only independent review');
+    const promptEvent = managerService.getTask(scope, task.id, { includeEvents: true })?.events
+      ?.filter((event) => event.type === 'prompt_sent')
+      .at(-1);
+    expect(promptEvent?.payload).toMatchObject({
+      prompt: 'review this implementation',
+      taskTemplate: 'review',
+      relatedTaskId: task.id,
+      workflowId: 'wf-1',
+      outputContractVersion: expect.any(String),
+    });
 
     workerResult.resolve({ success: true, responseText: 'done' });
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
