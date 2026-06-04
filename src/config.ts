@@ -2,6 +2,7 @@ import 'dotenv/config';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { validateBotsConfig } from './config-validation.js';
 
 /** Agent engine backing a bot. */
 export type EngineName = 'claude' | 'kimi' | 'codex';
@@ -197,6 +198,7 @@ interface EngineJsonFields {
   kimi?: KimiJsonConfig;
   codex?: CodexJsonConfig;
   manager?: ManagerBotConfig;
+  persistentExecutor?: BotConfigBase['persistentExecutor'];
 }
 
 export interface FeishuBotJsonEntry extends EngineJsonFields {
@@ -235,6 +237,7 @@ function feishuBotFromJson(entry: FeishuBotJsonEntry): BotConfig {
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
     ...(entry.manager ? { manager: entry.manager } : {}),
+    ...(entry.persistentExecutor ? { persistentExecutor: entry.persistentExecutor } : {}),
     feishu: {
       appId: entry.feishuAppId,
       appSecret: entry.feishuAppSecret,
@@ -277,6 +280,7 @@ function telegramBotFromJson(entry: TelegramBotJsonEntry): TelegramBotConfig {
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
     ...(entry.manager ? { manager: entry.manager } : {}),
+    ...(entry.persistentExecutor ? { persistentExecutor: entry.persistentExecutor } : {}),
     telegram: {
       botToken: entry.telegramBotToken,
     },
@@ -316,6 +320,7 @@ export function webBotFromJson(entry: WebBotJsonEntry): BotConfigBase {
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
     ...(entry.manager ? { manager: entry.manager } : {}),
+    ...(entry.persistentExecutor ? { persistentExecutor: entry.persistentExecutor } : {}),
     claude: buildClaudeConfig(entry),
   };
 }
@@ -345,6 +350,7 @@ function wechatBotFromJson(entry: WechatBotJsonEntry): WechatBotConfig {
     ...(entry.kimi ? { kimi: entry.kimi } : {}),
     ...(codex ? { codex } : {}),
     ...(entry.manager ? { manager: entry.manager } : {}),
+    ...(entry.persistentExecutor ? { persistentExecutor: entry.persistentExecutor } : {}),
     wechat: {
       ilinkBaseUrl: entry.ilinkBaseUrl,
       botToken: entry.wechatBotToken,
@@ -485,6 +491,7 @@ export function loadAppConfig(): AppConfig {
     const resolved = path.resolve(botsConfigPath);
     const raw = fs.readFileSync(resolved, 'utf-8');
     const parsed = JSON.parse(raw);
+    validateBotsConfig(parsed, resolved);
     parsedConfig = parsed;
 
     if (Array.isArray(parsed)) {

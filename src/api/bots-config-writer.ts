@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { BotsJsonNewFormat, FeishuBotJsonEntry, TelegramBotJsonEntry, WebBotJsonEntry, WechatBotJsonEntry } from '../config.js';
+import { validateBotsConfig } from '../config-validation.js';
 
 export function readBotsConfig(configPath: string): BotsJsonNewFormat {
   const raw = fs.readFileSync(configPath, 'utf-8');
@@ -15,6 +16,7 @@ export function readBotsConfig(configPath: string): BotsJsonNewFormat {
 }
 
 export function writeBotsConfig(configPath: string, config: BotsJsonNewFormat): void {
+  validateBotsConfig(config, configPath);
   const json = JSON.stringify(config, null, 2) + '\n';
   const tmpPath = path.join(path.dirname(configPath), '.bots.json.tmp');
   fs.writeFileSync(tmpPath, json, { mode: 0o600 });
