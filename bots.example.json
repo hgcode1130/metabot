@@ -1,20 +1,22 @@
 {
   "feishuBots": [
     {
-      "name": "project-alpha",
-      "description": "Frontend development agent for Project Alpha — React, TypeScript, CSS",
-      "specialties": ["frontend", "react", "typescript", "css"],
-      "icon": "🎨",
-      "maxConcurrentTasks": 3,
-      "budgetLimitDaily": 5.0,
-      "ttsVoice": "zh_male_rap_mars_bigtts",
-      "feishuAppId": "cli_xxx",
-      "feishuAppSecret": "secret1",
-      "defaultWorkingDirectory": "/home/user/project-alpha",
+      "name": "research-manager",
+      "description": "Single user-facing research manager bot that coordinates hidden workers",
+      "specialties": ["planning", "delegation", "research-management", "review", "summary"],
+      "groupNoMention": true,
+      "feishuAppId": "cli_manager_example",
+      "feishuAppSecret": "manager-secret-example",
+      "defaultWorkingDirectory": "/home/user/research-project",
       "manager": {
         "enabled": true,
-        "workers": ["project-beta", "project-gamma"],
+        "workers": ["worker-literature", "worker-code", "worker-analysis"],
         "maxConcurrentWorkerTasks": 4
+      },
+      "persistentExecutor": {
+        "enabled": true,
+        "idleTimeoutMs": 3600000,
+        "maxConcurrent": 4
       }
     },
     {
@@ -50,6 +52,41 @@
         "model": "gpt-5.4-codex",
         "approvalPolicy": "never",
         "sandbox": "workspace-write"
+      }
+    }
+  ],
+  "webBots": [
+    {
+      "name": "worker-literature",
+      "description": "Hidden worker for literature review, novelty checks, prior-art search, and citation/source synthesis",
+      "specialties": ["literature", "novelty", "prior-art", "citation", "research", "summarization"],
+      "defaultWorkingDirectory": "/home/user/research-project",
+      "persistentExecutor": {
+        "enabled": true,
+        "idleTimeoutMs": 3600000,
+        "maxConcurrent": 3
+      }
+    },
+    {
+      "name": "worker-code",
+      "description": "Hidden worker for code implementation, experiment execution, debugging, tests, and reproducibility checks",
+      "specialties": ["coding", "experiments", "debugging", "testing", "training", "reproducibility"],
+      "defaultWorkingDirectory": "/home/user/research-project",
+      "persistentExecutor": {
+        "enabled": true,
+        "idleTimeoutMs": 3600000,
+        "maxConcurrent": 3
+      }
+    },
+    {
+      "name": "worker-analysis",
+      "description": "Hidden worker for result analysis, independent review/audit, claims, paper writing, and rebuttal support",
+      "specialties": ["analysis", "review", "audit", "claims", "paper-writing", "rebuttal", "experiments"],
+      "defaultWorkingDirectory": "/home/user/research-project",
+      "persistentExecutor": {
+        "enabled": true,
+        "idleTimeoutMs": 3600000,
+        "maxConcurrent": 3
       }
     }
   ],
