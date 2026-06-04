@@ -4,6 +4,7 @@ import { ManagerStore, type ManagerStoreOptions, type ManagerTask, type ManagerT
 import type { TaskScheduler, ScheduledTask, RecurringTask, ScheduleMetadata } from '../scheduler/task-scheduler.js';
 import type { CardState } from '../types.js';
 import type { Logger } from '../utils/logger.js';
+import { buildWorkerTaskPrompt, normalizeWorkerTaskTemplate, WORKER_TASK_OUTPUT_CONTRACT_VERSION, type WorkerTaskTemplate } from './manager-worker-template.js';
 
 export interface ManagerScope {
   managerBotName: string;
@@ -28,6 +29,9 @@ export interface DispatchTaskInput {
   prompt: string;
   label?: string;
   sessionKey?: string;
+  taskTemplate?: WorkerTaskTemplate;
+  relatedTaskId?: string;
+  workflowId?: string;
   metadata?: Record<string, unknown>;
   sendCards?: boolean;
   waitTimeoutSeconds?: number;
@@ -172,6 +176,7 @@ export class ManagerService {
     }
 
     const workerChatId = buildWorkerChatId(scope, worker.name, input.sessionKey);
+    const taskTemplate = normalizeWorkerTaskTemplate(input.taskTemplate);
     const task = this.store.createTask({
       managerBotName: scope.managerBotName,
       managerChatId: scope.managerChatId,
@@ -182,6 +187,10 @@ export class ManagerService {
       metadata: {
         ...(input.metadata ?? {}),
         sessionKey: input.sessionKey ?? DEFAULT_SESSION_KEY,
+        taskTemplate,
+        outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION,
+        ...(input.relatedTaskId ? { relatedTaskId: input.relatedTaskId } : {}),
+        ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       },
     });
     this.store.appendEvent(task.id, 'queued', { workerChatId });
@@ -495,7 +504,17 @@ export class ManagerService {
 
     try {
       const result = await worker.bridge.executeApiTask({
-        prompt: task.prompt,
+        prompt: buildWorkerTaskPrompt({
+          prompt: task.prompt,
+          taskTemplate: task.metadata?.taskTemplate,
+          taskId: task.id,
+          traceId: task.traceId,
+          managerBotName: task.managerBotName,
+          workerBotName: task.workerBotName,
+          label: task.label,
+          relatedTaskId: task.metadata?.relatedTaskId,
+          workflowId: task.metadata?.workflowId,
+        }),
         chatId: task.workerChatId,
         userId: `manager:${task.managerBotName}`,
         sendCards,

@@ -262,12 +262,21 @@ describe('ManagerService', () => {
 
     expect(task.status).toBe('completed');
     expect(task.resultText).toBe('worker done');
+    expect(task.prompt).toBe('Do worker work');
+    expect(task.metadata).toMatchObject({
+      sessionKey: 'default',
+      taskTemplate: 'general',
+      outputContractVersion: expect.any(String),
+    });
     expect(executeApiTask).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: 'Do worker work',
       userId: 'manager:manager',
       sendCards: false,
     }));
     const callOptions = executeApiTask.mock.calls[0][0];
+    expect(callOptions.prompt).toContain('You are executing a delegated MetaBot worker task.');
+    expect(callOptions.prompt).toContain('Task ID:');
+    expect(callOptions.prompt).toContain('Template: general');
+    expect(callOptions.prompt).toContain('Do worker work');
     expect(callOptions.chatId).toMatch(/^manager-worker-[a-f0-9]{32}$/);
 
     await waitFor(() => expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
@@ -295,6 +304,42 @@ describe('ManagerService', () => {
       expect.stringContaining(task.id),
       'green',
     );
+  });
+
+  it('applies review templates and workflow metadata to dispatched worker execution', async () => {
+    const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText: 'review done',
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'Review the implementation diff',
+      taskTemplate: 'review',
+      relatedTaskId: 'mgrtask-related',
+      workflowId: 'workflow-1',
+      metadata: { source: 'test' },
+      waitTimeoutSeconds: 1,
+    });
+
+    expect(task.prompt).toBe('Review the implementation diff');
+    expect(task.metadata).toMatchObject({
+      source: 'test',
+      sessionKey: 'default',
+      taskTemplate: 'review',
+      relatedTaskId: 'mgrtask-related',
+      workflowId: 'workflow-1',
+      outputContractVersion: expect.any(String),
+    });
+    const callOptions = executeApiTask.mock.calls[0][0];
+    expect(callOptions.prompt).toContain('Template: review');
+    expect(callOptions.prompt).toContain('Related task ID: mgrtask-related');
+    expect(callOptions.prompt).toContain('Workflow ID: workflow-1');
+    expect(callOptions.prompt).toContain('Treat this as a read-only independent review');
+    expect(callOptions.prompt).toContain('Review the implementation diff');
   });
 
   it('returns queued tasks quickly by default while worker execution continues asynchronously', async () => {

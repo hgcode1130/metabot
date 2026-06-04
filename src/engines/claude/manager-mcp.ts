@@ -2,6 +2,7 @@ import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@
 import { z } from 'zod';
 import type { Logger } from '../../utils/logger.js';
 import type { ManagerScope, ManagerService } from '../../api/manager-service.js';
+import { WORKER_TASK_TEMPLATES } from '../../api/manager-worker-template.js';
 
 export const MANAGER_MCP_SERVER_NAME = 'metabot-manager';
 export const MANAGER_MCP_ALLOWED_TOOLS = [
@@ -43,6 +44,9 @@ export function buildManagerMcpServer(options: ManagerMcpOptions): McpSdkServerC
           prompt: z.string().min(1).describe('Task prompt for the worker'),
           label: z.string().optional(),
           sessionKey: z.string().optional().describe('Stable worker session key; same key preserves worker session context'),
+          taskTemplate: z.enum(WORKER_TASK_TEMPLATES).optional().describe('Optional standardized output template: research, implementation, review, audit, or general'),
+          relatedTaskId: z.string().optional().describe('Optional related manager task ID for implementation/review or research/analysis workflows'),
+          workflowId: z.string().optional().describe('Optional stable workflow identifier shared by related worker tasks'),
           sendCards: z.boolean().optional().describe('Normally false so hidden worker sessions do not spam the user chat'),
           waitTimeoutSeconds: z.number().int().min(0).max(60).optional().describe('Optional short wait for quick tasks; long tasks should stay async'),
           metadata: z.record(z.string(), z.unknown()).optional(),
@@ -59,6 +63,9 @@ export function buildManagerMcpServer(options: ManagerMcpOptions): McpSdkServerC
           prompt: z.string().min(1),
           label: z.string().optional(),
           sessionKey: z.string().optional(),
+          taskTemplate: z.enum(WORKER_TASK_TEMPLATES).optional(),
+          relatedTaskId: z.string().optional(),
+          workflowId: z.string().optional(),
           waitTimeoutSeconds: z.number().int().min(0).max(60).optional(),
           metadata: z.record(z.string(), z.unknown()).optional(),
         },
