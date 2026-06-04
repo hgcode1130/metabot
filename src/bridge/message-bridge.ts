@@ -67,6 +67,9 @@ const IDLE_TIMEOUT_MESSAGE = 'Task aborted: no activity for 1 hour';
 const BATCH_DEBOUNCE_MS = 2000; // 2s window to collect multiple images/files
 const DEFAULT_IMAGE_TEXT = '请分析这张图片';
 const DEFAULT_FILE_TEXT = '请分析这个文件';
+const SHUTDOWN_TASK_ERROR_MESSAGE = 'Task was interrupted because MetaBot restarted.';
+const SHUTDOWN_CONTINUATION_ERROR_MESSAGE = 'Agent continuation was interrupted because MetaBot restarted.';
+const SHUTDOWN_QUESTION_RESPONSE = '_Question canceled because MetaBot restarted._';
 
 /**
  * Extract a one-line summary from an SDK stream message for the spontaneous
@@ -2772,7 +2775,51 @@ export class MessageBridge {
     }
   }
 
-  destroy(): void {
+  private async updateShutdownCard(messageId: string, state: CardState): Promise<void> {
+    const ok = await this.sender.updateCard(messageId, state);
+    if (!ok) throw new Error(`Failed to update shutdown card ${messageId}`);
+  }
+
+  private async updateShutdownQuestionCard(messageId: string, state: CardState): Promise<void> {
+    const update = this.sender.updateQuestionCard
+      ? this.sender.updateQuestionCard.bind(this.sender)
+      : this.sender.updateCard.bind(this.sender);
+    const ok = await update(messageId, state);
+    if (!ok) throw new Error(`Failed to update shutdown question card ${messageId}`);
+  }
+
+  private async finalizeRunningTaskForShutdown(_chatId: string, task: RunningTask): Promise<void> {
+    await task.rateLimiter.cancelAndWait();
+    const current = task.processor.getCurrentState();
+    await this.updateShutdownCard(task.cardMessageId, {
+      ...current,
+      status: 'error',
+      teamState: task.teamState,
+      errorMessage: SHUTDOWN_TASK_ERROR_MESSAGE,
+    });
+    if (task.questionCardMessageId) {
+      await this.updateShutdownQuestionCard(task.questionCardMessageId, {
+        status: 'error',
+        userPrompt: 'Question',
+        responseText: SHUTDOWN_QUESTION_RESPONSE,
+        toolCalls: [],
+        errorMessage: SHUTDOWN_TASK_ERROR_MESSAGE,
+      });
+    }
+  }
+
+  private async finalizeContinuationForShutdown(messageId: string): Promise<void> {
+    await this.updateShutdownCard(messageId, {
+      status: 'error',
+      userPrompt: '(agent continuation: background task return)',
+      responseText: '',
+      toolCalls: [],
+      errorMessage: SHUTDOWN_CONTINUATION_ERROR_MESSAGE,
+    });
+  }
+
+  async destroy(): Promise<void> {
+    const finalizers: Promise<void>[] = [];
     for (const [, batch] of this.pendingBatches) {
       clearTimeout(batch.timerId);
     }
@@ -2781,6 +2828,7 @@ export class MessageBridge {
       if (task.questionTimeoutId) {
         clearTimeout(task.questionTimeoutId);
       }
+      finalizers.push(this.finalizeRunningTaskForShutdown(chatId, task));
       task.executionHandle.finish();
       task.abortController.abort();
       this.logger.info({ chatId }, 'Aborted running task during shutdown');
@@ -2789,14 +2837,19 @@ export class MessageBridge {
     // Abort any in-flight continuation cards too — their executors are
     // about to be torn down by shutdownAll below.
     for (const [chatId, cont] of this.continuationTasks) {
+      finalizers.push(this.finalizeContinuationForShutdown(cont.cardMessageId));
       cont.abortController.abort();
       this.logger.info({ chatId }, 'Aborted continuation task during shutdown');
     }
     this.continuationTasks.clear();
+    const results = await Promise.allSettled(finalizers);
+    const failedFinalizers = results.filter((result) => result.status === 'rejected').length;
+    if (failedFinalizers > 0) {
+      this.logger.warn({ failedFinalizers }, 'Failed to finalize some cards during shutdown');
+    }
     this.sessionManager.destroy();
-    // Tear down persistent executors (Stage 2). Fire-and-forget so destroy()
-    // stays sync — registry.shutdownAll waits for clean SDK process exit
-    // internally and is idempotent.
+    // Tear down persistent executors (Stage 2). The registry shutdown is
+    // idempotent and waits for clean SDK process exit internally.
     if (this.persistentRegistry) {
       void this.persistentRegistry.shutdownAll('bridge-destroy');
     }

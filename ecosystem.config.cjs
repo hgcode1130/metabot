@@ -24,6 +24,8 @@ module.exports = {
       max_restarts: 10,
       min_uptime: '10s',
       restart_delay: 3000,
+      // Let the SIGTERM handler update in-flight IM cards before PM2 sends SIGKILL.
+      kill_timeout: 15000,
 
       // Logs
       error_file: path.join(__dirname, 'logs', 'error.log'),

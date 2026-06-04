@@ -296,7 +296,10 @@ async function main() {
   });
 
   // Graceful shutdown
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info('Shutting down...');
     scheduler.destroy();
     managerService.destroy();
@@ -312,22 +315,19 @@ async function main() {
       memoryServer.server.close();
       memoryServer.storage.close();
     }
-    for (const handle of feishuHandles) {
-      handle.bridge.destroy();
-    }
-    for (const handle of telegramHandles) {
-      handle.bridge.destroy();
-      handle.bot.stop();
-    }
-    for (const handle of wechatHandles) {
-      handle.bridge.destroy();
-      handle.stop();
-    }
+    await Promise.allSettled([
+      ...feishuHandles.map((handle) => handle.bridge.destroy()),
+      ...telegramHandles.map((handle) => handle.bridge.destroy()),
+      ...wechatHandles.map((handle) => handle.bridge.destroy()),
+      ...appConfig.webBots.map((_, index) => registry.get(appConfig.webBots[index].name)?.bridge.destroy()),
+    ].filter((promise): promise is Promise<void> => !!promise));
+    for (const handle of telegramHandles) handle.bot.stop();
+    for (const handle of wechatHandles) handle.stop();
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => { void shutdown(); });
+  process.on('SIGTERM', () => { void shutdown(); });
 }
 
 async function startBotsSafely<TConfig extends BotConfigBase, THandle>(
