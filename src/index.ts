@@ -31,10 +31,24 @@ interface FeishuBotHandle {
   feishuClient: lark.Client;
 }
 
-async function startFeishuBot(botConfig: BotConfig, logger: Logger, memoryServerUrl: string, memorySecret?: string): Promise<FeishuBotHandle> {
+async function startFeishuBot(
+  botConfig: BotConfig,
+  logger: Logger,
+  memoryServerUrl: string,
+  memorySecret?: string,
+): Promise<FeishuBotHandle> {
   const botLogger = logger.child({ bot: botConfig.name });
 
   botLogger.info('Starting Feishu bot...');
+  if (botConfig.groupNoMention) {
+    botLogger.warn(
+      {
+        requiredEvent: 'im.message.receive_v1',
+        requiredPermission: '获取群组中所有消息 / im:message.group_msg',
+      },
+      'groupNoMention is enabled; Feishu must grant full group-message delivery or unmentioned group messages will not reach MetaBot',
+    );
+  }
 
   // Create Feishu API client
   const client = new lark.Client({
@@ -51,10 +65,15 @@ async function startFeishuBot(botConfig: BotConfig, logger: Logger, memoryServer
     if (botOpenId) {
       botLogger.info({ botOpenId }, 'Bot info fetched');
     } else {
-      botLogger.warn('Could not get bot open_id. Ensure the Feishu app has Bot capability enabled and the app version is published.');
+      botLogger.warn(
+        'Could not get bot open_id. Ensure the Feishu app has Bot capability enabled and the app version is published.',
+      );
     }
   } catch (err: any) {
-    botLogger.warn({ err: err?.message || err }, 'Failed to fetch bot info. Check: 1) Bot capability is enabled in Feishu app 2) App is published 3) App credentials are correct');
+    botLogger.warn(
+      { err: err?.message || err },
+      'Failed to fetch bot info. Check: 1) Bot capability is enabled in Feishu app 2) App is published 3) App credentials are correct',
+    );
   }
 
   // Create sender and bridge (FeishuSenderAdapter wraps the Feishu-specific MessageSender)
@@ -91,11 +110,14 @@ async function startFeishuBot(botConfig: BotConfig, logger: Logger, memoryServer
   await wsClient.start({ eventDispatcher: dispatcher });
 
   botLogger.info('Feishu bot is running');
-  botLogger.info({
-    defaultWorkingDirectory: botConfig.claude.defaultWorkingDirectory,
-    maxTurns: botConfig.claude.maxTurns ?? 'unlimited',
-    maxBudgetUsd: botConfig.claude.maxBudgetUsd ?? 'unlimited',
-  }, 'Configuration');
+  botLogger.info(
+    {
+      defaultWorkingDirectory: botConfig.claude.defaultWorkingDirectory,
+      maxTurns: botConfig.claude.maxTurns ?? 'unlimited',
+      maxBudgetUsd: botConfig.claude.maxBudgetUsd ?? 'unlimited',
+    },
+    'Configuration',
+  );
 
   return { name: botConfig.name, bridge, wsClient, config: botConfig, sender, feishuClient: client };
 }
@@ -112,39 +134,50 @@ async function main() {
   const feishuCount = appConfig.feishuBots.length;
   const telegramCount = appConfig.telegramBots.length;
   const wechatCount = appConfig.wechatBots.length;
-  logger.info({ feishuBots: feishuCount, telegramBots: telegramCount, wechatBots: wechatCount, memoryServerUrl: appConfig.memoryServerUrl }, 'Starting MetaBot bridge...');
+  logger.info(
+    {
+      feishuBots: feishuCount,
+      telegramBots: telegramCount,
+      wechatBots: wechatCount,
+      memoryServerUrl: appConfig.memoryServerUrl,
+    },
+    'Starting MetaBot bridge...',
+  );
 
   // Create bot registry
   const registry = new BotRegistry();
 
   // Start bots independently so a single platform/API timeout does not
   // take down the whole MetaBot process.
-  const feishuHandles = feishuCount > 0
-    ? await startBotsSafely(
-      appConfig.feishuBots,
-      (bot) => startFeishuBot(bot, logger, appConfig.memoryServerUrl, appConfig.memory.secret || undefined),
-      logger,
-      'feishu',
-    )
-    : [];
+  const feishuHandles =
+    feishuCount > 0
+      ? await startBotsSafely(
+          appConfig.feishuBots,
+          (bot) => startFeishuBot(bot, logger, appConfig.memoryServerUrl, appConfig.memory.secret || undefined),
+          logger,
+          'feishu',
+        )
+      : [];
 
-  const telegramHandles = telegramCount > 0
-    ? await startBotsSafely(
-      appConfig.telegramBots,
-      (bot) => startTelegramBot(bot, logger, appConfig.memoryServerUrl, appConfig.memory.secret || undefined),
-      logger,
-      'telegram',
-    )
-    : [];
+  const telegramHandles =
+    telegramCount > 0
+      ? await startBotsSafely(
+          appConfig.telegramBots,
+          (bot) => startTelegramBot(bot, logger, appConfig.memoryServerUrl, appConfig.memory.secret || undefined),
+          logger,
+          'telegram',
+        )
+      : [];
 
-  const wechatHandles = wechatCount > 0
-    ? await startBotsSafely(
-      appConfig.wechatBots,
-      (bot) => startWechatBot(bot, logger, appConfig.memoryServerUrl, appConfig.memory.secret || undefined),
-      logger,
-      'wechat',
-    )
-    : [];
+  const wechatHandles =
+    wechatCount > 0
+      ? await startBotsSafely(
+          appConfig.wechatBots,
+          (bot) => startWechatBot(bot, logger, appConfig.memoryServerUrl, appConfig.memory.secret || undefined),
+          logger,
+          'wechat',
+        )
+      : [];
 
   // Register all bots in the registry
   for (const handle of feishuHandles) {
@@ -172,7 +205,13 @@ async function main() {
   for (const webConfig of appConfig.webBots) {
     const botLogger = logger.child({ bot: webConfig.name });
     const sender = new NullSender();
-    const bridge = new MessageBridge(webConfig, botLogger, sender, appConfig.memoryServerUrl, appConfig.memory.secret || undefined);
+    const bridge = new MessageBridge(
+      webConfig,
+      botLogger,
+      sender,
+      appConfig.memoryServerUrl,
+      appConfig.memory.secret || undefined,
+    );
     registry.register({ name: webConfig.name, platform: 'web', config: webConfig, bridge, sender });
   }
 
@@ -274,9 +313,7 @@ async function main() {
   }
 
   // Resolve bots config path for API-driven bot CRUD
-  const botsConfigPath = process.env.BOTS_CONFIG
-    ? path.resolve(process.env.BOTS_CONFIG)
-    : undefined;
+  const botsConfigPath = process.env.BOTS_CONFIG ? path.resolve(process.env.BOTS_CONFIG) : undefined;
 
   // Start API server
   const apiServer = startApiServer({
@@ -290,7 +327,8 @@ async function main() {
     feishuServiceClient,
     peerManager,
     memoryServerUrl: appConfig.memoryServerUrl,
-    memoryAuthToken: appConfig.memory.adminToken || appConfig.memory.readerToken || appConfig.memory.secret || undefined,
+    memoryAuthToken:
+      appConfig.memory.adminToken || appConfig.memory.readerToken || appConfig.memory.secret || undefined,
     sessionRegistry,
     managerService,
   });

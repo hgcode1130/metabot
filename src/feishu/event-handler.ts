@@ -2,6 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import type { BotConfig } from '../config.js';
 import type { Logger } from '../utils/logger.js';
 import { MessageSender } from './message-sender.js';
+import { decideGroupMessageHandling } from './group-message-policy.js';
 
 // Re-export from shared types so existing imports continue to work
 export type { IncomingMessage } from '../types.js';
@@ -45,7 +46,7 @@ function getCachedMedia(chatId: string, userId: string): CachedMedia[] {
   const items = pendingMediaCache.get(key);
   if (!items) return [];
   const now = Date.now();
-  const valid = items.filter(m => now - m.ts < MEDIA_CACHE_TTL_MS);
+  const valid = items.filter((m) => now - m.ts < MEDIA_CACHE_TTL_MS);
   if (valid.length === 0) {
     pendingMediaCache.delete(key);
     return [];
@@ -87,9 +88,11 @@ export function createEventDispatcher(
   // Register the card action trigger handler (fired when a user clicks a button
   // on an interactive card). The lark SDK types omit this event so we cast.
   if (onCardAction) {
-    (dispatcher as unknown as {
-      register: (handlers: Record<string, (data: unknown) => unknown>) => void;
-    }).register({
+    (
+      dispatcher as unknown as {
+        register: (handlers: Record<string, (data: unknown) => unknown>) => void;
+      }
+    ).register({
       'card.action.trigger': (data: unknown) => {
         try {
           const d = data as {
@@ -145,34 +148,35 @@ export function createEventDispatcher(
         const chatType = message.chat_type;
         const messageId = message.message_id;
 
-        // In group chats, only respond when the bot is @mentioned
-        // Exceptions: 2-member groups are treated like DMs; groupNoMention mode skips @mention check
+        // In group chats, default to @mentions. 2-member groups and explicit
+        // groupNoMention mode process unmentioned events when Feishu delivers them.
         const mentions = message.mentions;
         if (chatType === 'group') {
-          const botMentioned = botOpenId
-            ? mentions?.some((m: any) => m.id?.open_id === botOpenId)
-            : mentions && mentions.length > 0;
-          if (!botMentioned) {
-            // groupNoMention mode: respond to all messages without @mention
-            if (config.groupNoMention) {
-              logger.debug({ chatId }, 'Group no-mention mode enabled, processing without @mention');
-            } else if (messageSender && await isPrivateLikeGroup(chatId, messageSender)) {
-              logger.debug({ chatId }, 'Private-like group (2 members), processing without @mention');
-            } else if (msgType === 'image' || msgType === 'file') {
-              // Cache media messages for later retrieval when user @mentions bot
-              const media = parseMediaMessage(message, msgType, logger);
-              if (media) {
-                const key = cacheMediaKey(chatId, userId);
-                const items = pendingMediaCache.get(key) || [];
-                items.push({ ...media, messageId, ts: Date.now() });
-                pendingMediaCache.set(key, items);
-                logger.info({ chatId, userId, msgType, ...media }, 'Cached group media for later @mention');
-              }
-              return;
-            } else {
-              logger.debug('Ignoring group message without @mention');
-              return;
+          const groupDecision = await decideGroupMessageHandling({
+            chatType,
+            msgType,
+            mentions,
+            botOpenId,
+            groupNoMention: config.groupNoMention,
+            isPrivateLikeGroup: messageSender ? () => isPrivateLikeGroup(chatId, messageSender) : undefined,
+          });
+          if (groupDecision.reason === 'group_no_mention') {
+            logger.debug({ chatId }, 'Group no-mention mode enabled, processing without @mention');
+          } else if (groupDecision.reason === 'private_like') {
+            logger.debug({ chatId }, 'Private-like group (2 members), processing without @mention');
+          } else if (groupDecision.action === 'cache_media') {
+            const media = parseMediaMessage(message, msgType, logger);
+            if (media) {
+              const key = cacheMediaKey(chatId, userId);
+              const items = pendingMediaCache.get(key) || [];
+              items.push({ ...media, messageId, ts: Date.now() });
+              pendingMediaCache.set(key, items);
+              logger.info({ chatId, userId, msgType, ...media }, 'Cached group media for later @mention');
             }
+            return;
+          } else if (groupDecision.action === 'ignore') {
+            logger.debug('Ignoring group message without @mention');
+            return;
           }
         }
 
@@ -224,7 +228,10 @@ export function createEventDispatcher(
               imageKey = postImages[0];
               postExtraImages = postImages.slice(1);
             }
-            logger.debug({ extractedText: text.slice(0, 200), imageKey, postImageCount: postImages.length }, 'Extracted post content');
+            logger.debug(
+              { extractedText: text.slice(0, 200), imageKey, postImageCount: postImages.length },
+              'Extracted post content',
+            );
           } catch {
             logger.warn({ content: message.content }, 'Failed to parse post message content');
             return;
@@ -264,7 +271,7 @@ export function createEventDispatcher(
         // Collect extra media: post images (2nd+) and cached group media
         let extraMedia: IncomingMessage['extraMedia'];
         if (postExtraImages.length > 0) {
-          extraMedia = postExtraImages.map(key => ({
+          extraMedia = postExtraImages.map((key) => ({
             messageId,
             imageKey: key,
           }));
@@ -273,7 +280,7 @@ export function createEventDispatcher(
         if (chatType === 'group') {
           const cached = getCachedMedia(chatId, userId);
           if (cached.length > 0) {
-            const cachedMedia = cached.map(m => ({
+            const cachedMedia = cached.map((m) => ({
               messageId: m.messageId,
               imageKey: m.imageKey,
               fileKey: m.fileKey,
@@ -297,7 +304,9 @@ export function createEventDispatcher(
 
 /** Parse image/file message content, returning media fields or undefined on failure. */
 function parseMediaMessage(
-  message: any, msgType: string, logger: Logger,
+  message: any,
+  msgType: string,
+  logger: Logger,
 ): { imageKey?: string; fileKey?: string; fileName?: string } | undefined {
   try {
     const content = JSON.parse(message.content);
@@ -308,7 +317,7 @@ function parseMediaMessage(
     if (msgType === 'file') {
       const fileKey = content.file_key;
       const fileName = content.file_name;
-      return (fileKey && fileName) ? { fileKey, fileName } : undefined;
+      return fileKey && fileName ? { fileKey, fileName } : undefined;
     }
   } catch {
     logger.warn({ msgType }, 'Failed to parse media message for caching');
