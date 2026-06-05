@@ -90,6 +90,63 @@ describe('StreamProcessor', () => {
     expect(state.errorMessage).toBe('Something failed; Another error');
   });
 
+  it('detects malformed HTTP 200 API errors wrapped as success', () => {
+    const p = new StreamProcessor('hi');
+    const error = 'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request';
+    const state = p.processMessage(msg({
+      type: 'result',
+      subtype: 'success',
+      result: error,
+    }));
+    expect(state.status).toBe('error');
+    expect(state.responseText).toBe('');
+    expect(state.errorMessage).toBe(error);
+  });
+
+  it('preserves streamed response text when a final API error arrives', () => {
+    const p = new StreamProcessor('hi');
+    p.processMessage(msg({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', delta: { type: 'text_delta', text: '前面的重要回答' } },
+    }));
+    const state = p.processMessage(msg({
+      type: 'result',
+      subtype: 'success',
+      result: 'API Error: 500 {"error":"gateway failed"}',
+    }));
+    expect(state.status).toBe('error');
+    expect(state.responseText).toBe('前面的重要回答');
+    expect(state.errorMessage).toBe('API Error: 500 {"error":"gateway failed"}');
+  });
+
+  it('preserves assistant text when a synthetic assistant API error arrives', () => {
+    const p = new StreamProcessor('hi');
+    p.processMessage(msg({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'text', text: '第一段回答，而且' }] },
+    }));
+    p.processMessage(msg({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'text', text: '第二段续写。' }] },
+    }));
+    const state = p.processMessage(msg({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [{
+          type: 'text',
+          text: 'API Error: API returned an empty or malformed response (HTTP 200) — check for a proxy or gateway intercepting the request',
+        }],
+      },
+    }));
+    expect(state.status).toBe('error');
+    expect(state.responseText).toBe('第一段回答，而且第二段续写。');
+    expect(state.errorMessage).toContain('HTTP 200');
+  });
+
   it('detects AskUserQuestion and sets waiting_for_input', () => {
     const p = new StreamProcessor('hi');
     const state = p.processMessage(msg({

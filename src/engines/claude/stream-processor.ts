@@ -6,6 +6,7 @@ import type {
   ToolCall,
   PendingQuestion,
 } from '../../feishu/card-builder.js';
+import { selectFinalResponseText, selectUserFacingResponseText } from './taskmaster-response.js';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.tiff']);
 
@@ -36,6 +37,7 @@ export class StreamProcessor {
   private _model: string | undefined;
   private _totalTokens: number | undefined;
   private _contextWindow: number | undefined;
+  private _apiErrorMessage: string | undefined;
   // Track per-API-call usage from stream events for accurate context window display
   private _lastInputTokens: number | undefined;
   private _lastOutputTokens: number | undefined;
@@ -78,12 +80,20 @@ export class StreamProcessor {
         break;
     }
 
+    if (this._apiErrorMessage) {
+      return this.buildCurrentState('error', this._apiErrorMessage);
+    }
+
     // Determine running status
     const hasActiveTools = this.toolCalls.some((t) => t.status === 'running');
     const status = this._pendingQuestions.length > 0
       ? 'waiting_for_input'
       : hasActiveTools ? 'running' : this.responseText ? 'running' : 'thinking';
 
+    return this.buildCurrentState(status);
+  }
+
+  private buildCurrentState(status: CardState['status'], errorMessage?: string): CardState {
     return {
       status,
       userPrompt: this.userPrompt,
@@ -91,6 +101,7 @@ export class StreamProcessor {
       toolCalls: [...this.toolCalls],
       costUsd: this.costUsd,
       durationMs: this.durationMs,
+      errorMessage,
       model: this._model,
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
@@ -175,8 +186,13 @@ export class StreamProcessor {
       if (block.type === 'text' && block.text) {
         // Only accumulate text from top-level assistant messages (not subagent)
         if (message.parent_tool_use_id === null || message.parent_tool_use_id === undefined) {
+          const apiErrorMessage = getApiErrorMessage(block.text);
+          if (apiErrorMessage) {
+            this._apiErrorMessage = apiErrorMessage;
+            continue;
+          }
           // Full message text replaces accumulated stream text
-          this.responseText = block.text;
+          this.responseText = selectUserFacingResponseText(this.responseText, block.text);
         }
       } else if (block.type === 'tool_use' && block.name) {
         this.addToolCall(block.name, block.input);
@@ -273,21 +289,30 @@ export class StreamProcessor {
       tool.status = 'done';
     }
 
-    const resultText = message.result || this.responseText;
+    const previousResponseText = this.responseText;
+    const rawResultText = message.result || previousResponseText;
     const isError = message.subtype !== 'success';
+    const rawApiErrorMessage = !isError ? getApiErrorMessage(rawResultText) : undefined;
+    const resultText = rawApiErrorMessage
+      ? previousResponseText
+      : selectFinalResponseText(previousResponseText, rawResultText);
     // SDK sometimes wraps API errors as "success" with the error text as result
-    const isApiError = !isError && isApiErrorResult(resultText);
+    const apiErrorMessage = !isError
+      ? this._apiErrorMessage ?? rawApiErrorMessage ?? getApiErrorMessage(resultText)
+      : undefined;
+    const responseText = apiErrorMessage ? previousResponseText : resultText;
+    this.responseText = responseText;
 
     return {
-      status: (isError || isApiError) ? 'error' : 'complete',
+      status: (isError || apiErrorMessage) ? 'error' : 'complete',
       userPrompt: this.userPrompt,
-      responseText: isApiError ? '' : resultText,
+      responseText,
       toolCalls: [...this.toolCalls],
       costUsd: this.costUsd,
       durationMs: this.durationMs,
       errorMessage: isError
         ? (message.errors?.join('; ') || `Ended with: ${message.subtype}`)
-        : isApiError ? resultText : undefined,
+        : apiErrorMessage,
       model: this._model,
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
@@ -376,25 +401,15 @@ export class StreamProcessor {
 
   /** Return the current card state without processing a new message. */
   getCurrentState(): CardState {
+    if (this._apiErrorMessage) {
+      return this.buildCurrentState('error', this._apiErrorMessage);
+    }
+
     const hasActiveTools = this.toolCalls.some((t) => t.status === 'running');
     const status = this._pendingQuestions.length > 0
       ? 'waiting_for_input'
       : hasActiveTools ? 'running' : this.responseText ? 'running' : 'thinking';
-    return {
-      status,
-      userPrompt: this.userPrompt,
-      responseText: this.responseText,
-      toolCalls: [...this.toolCalls],
-      costUsd: this.costUsd,
-      durationMs: this.durationMs,
-      model: this._model,
-      totalTokens: this._totalTokens,
-      contextWindow: this._contextWindow,
-      pendingQuestion: this._pendingQuestions[0] || undefined,
-      backgroundEvents: this._backgroundEvents.size > 0
-        ? [...this._backgroundEvents.values()]
-        : undefined,
-    };
+    return this.buildCurrentState(status);
   }
 
   getSessionId(): string | undefined {
@@ -470,8 +485,11 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max) + '...';
 }
 
-/** Detect API error responses that the SDK wraps as successful results */
-function isApiErrorResult(text: string): boolean {
-  if (!text) return false;
-  return /^API Error:\s*\d{3}\s/i.test(text);
+/** Detect API error responses that the SDK wraps as successful results. */
+function getApiErrorMessage(text: string): string | undefined {
+  if (!text) return undefined;
+  if (!/^API Error:\s+/i.test(text)) return undefined;
+  if (/^API Error:\s*\d{3}\b/i.test(text)) return text;
+  if (/\bHTTP\s+\d{3}\b/i.test(text)) return text;
+  return undefined;
 }
