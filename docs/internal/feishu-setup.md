@@ -36,6 +36,7 @@ This is the step-by-step procedure to configure a Feishu bot for this bridge ser
 4. Check these two scopes:
    - **`im:message`** — Read and send messages in private and group chats
    - **`im:message:readonly`** — Read messages in private and group chats
+   - **`im:message.group_msg`** — Get all messages in groups (needed for unmentioned group auto-response)
    - **`im:resource`** — Upload images and files (needed to send output files back to chat)
    - **`im:chat:readonly`** — Read chat info (needed for 2-member group detection)
 5. Click **"Add Scopes"**

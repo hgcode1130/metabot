@@ -4,7 +4,7 @@
 
 ### Control Claude Code, Kimi Code, or Codex CLI from your phone via Feishu / Telegram / WeChat
 
-*Write code · Manage agents · Automate everything*
+_Write code · Manage agents · Automate everything_
 
 <p>
   <a href="https://github.com/xvirobotics/metabot/actions"><img src="https://img.shields.io/github/actions/workflow/status/xvirobotics/metabot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=github" alt="CI"></a>
@@ -60,17 +60,18 @@ The installer walks you through everything: working directory → **engine choic
 
 MetaBot isn't locked to one vendor — all three top AI coding agents ship with native support, and **your subscription works directly**.
 
-| | **Claude Code** (Anthropic) | **Kimi Code** (Moonshot) | **Codex CLI** (OpenAI) |
-|---|---|---|---|
-| **Subscription login** | ✅ `claude login` OAuth | ✅ `kimi login` | ✅ `codex login` — uses your ChatGPT subscription |
-| **API key fallback** | ✅ `ANTHROPIC_API_KEY` or third-party Anthropic-compat endpoints | ✅ Moonshot API key | ✅ `OPENAI_API_KEY` / Codex profile |
-| **Context window** | 200k (1M optional on Opus/Sonnet) | 256k (kimi-for-coding) | 400k (gpt-5.x-codex) |
-| **Tools** | Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP | Same (Kimi CLI builtin + `.claude/skills/` auto-discovery) | Codex CLI native toolchain + `.codex/skills/` auto-discovery |
-| **Autonomous mode** | `bypassPermissions` | `yoloMode` (equivalent) | Defaults to `--sandbox danger-full-access` to avoid `bwrap` failures on hosts without user namespaces |
-| **Subagents** | `.claude/agents/*.md` auto-loaded | Builtin `default` / `okabe` only | Project subagents are not auto-loaded; put role routing in `AGENTS.md` |
-| **Workspace doc** | `CLAUDE.md` | `AGENTS.md` (installer creates the symlink) | `AGENTS.md` (Codex convention) |
+|                        | **Claude Code** (Anthropic)                                      | **Kimi Code** (Moonshot)                                   | **Codex CLI** (OpenAI)                                                                                |
+| ---------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Subscription login** | ✅ `claude login` OAuth                                          | ✅ `kimi login`                                            | ✅ `codex login` — uses your ChatGPT subscription                                                     |
+| **API key fallback**   | ✅ `ANTHROPIC_API_KEY` or third-party Anthropic-compat endpoints | ✅ Moonshot API key                                        | ✅ `OPENAI_API_KEY` / Codex profile                                                                   |
+| **Context window**     | 200k (1M optional on Opus/Sonnet)                                | 256k (kimi-for-coding)                                     | 400k (gpt-5.x-codex)                                                                                  |
+| **Tools**              | Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP                     | Same (Kimi CLI builtin + `.claude/skills/` auto-discovery) | Codex CLI native toolchain + `.codex/skills/` auto-discovery                                          |
+| **Autonomous mode**    | `bypassPermissions`                                              | `yoloMode` (equivalent)                                    | Defaults to `--sandbox danger-full-access` to avoid `bwrap` failures on hosts without user namespaces |
+| **Subagents**          | `.claude/agents/*.md` auto-loaded                                | Builtin `default` / `okabe` only                           | Project subagents are not auto-loaded; put role routing in `AGENTS.md`                                |
+| **Workspace doc**      | `CLAUDE.md`                                                      | `AGENTS.md` (installer creates the symlink)                | `AGENTS.md` (Codex convention)                                                                        |
 
 **One line of config** — each bot picks its engine:
+
 ```json
 { "name": "bulma", "engine": "kimi",   "kimi": { "thinking": true } }
 { "name": "goku",  "engine": "claude" }
@@ -83,11 +84,11 @@ Codex support uses the local `codex exec --json` CLI and resumes chat sessions w
 
 Claude/Kimi and Codex use different discovery paths. MetaBot mirrors bundled skills during install/update and Skill Hub installs:
 
-| Content | Claude / Kimi | Codex |
-|---------|---------------|-------|
-| Workspace instructions | `CLAUDE.md` | `AGENTS.md` |
-| Skills | `.claude/skills/<name>/SKILL.md` | `.codex/skills/<name>/SKILL.md` |
-| Subagents | `.claude/agents/*.md` | Not auto-loaded; migrate roles/routes into `AGENTS.md` |
+| Content                | Claude / Kimi                    | Codex                                                  |
+| ---------------------- | -------------------------------- | ------------------------------------------------------ |
+| Workspace instructions | `CLAUDE.md`                      | `AGENTS.md`                                            |
+| Skills                 | `.claude/skills/<name>/SKILL.md` | `.codex/skills/<name>/SKILL.md`                        |
+| Subagents              | `.claude/agents/*.md`            | Not auto-loaded; migrate roles/routes into `AGENTS.md` |
 
 For an existing project, ask Codex to migrate it:
 
@@ -116,17 +117,17 @@ Run your frontend bot on Claude and your backend bot on Kimi? Totally fine. The 
 
 ## Why MetaBot
 
-| | MetaBot | Claude / Kimi / Codex CLI (terminal) | Dify / Coze |
-|---|---|---|---|
-| **Mobile access** | Feishu/TG/WeChat anywhere | Terminal only | Yes, but can't run code |
-| **Engine choice** | Claude ✕ Kimi ✕ Codex, three engines | One at a time | None, API calls only |
-| **Subscription login** | All three native subscriptions work directly | One at a time | Subscriptions not supported |
-| **Code capabilities** | Full Agent SDK (Read/Write/Edit/Bash/MCP) | Full | None |
-| **Multi-agent** | Agent Bus + task delegation + runtime creation | Single session | Yes, but closed ecosystem |
-| **Shared memory** | MetaMemory with FTS + auto-sync to Wiki | None | None |
-| **Scheduling** | CC-native `CronCreate` / `/loop` work out of the box; opt-in `/metaschedule` for cross-restart persistence | Native `CronCreate` / `/loop` only | Yes |
-| **Autonomous** | bypassPermissions / yoloMode, fully automated | Requires human approval | Limited to workflows |
-| **Open source** | MIT, fully controllable | CLI is open source | Closed-source SaaS |
+|                        | MetaBot                                                                                                    | Claude / Kimi / Codex CLI (terminal) | Dify / Coze                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------ | --------------------------- |
+| **Mobile access**      | Feishu/TG/WeChat anywhere                                                                                  | Terminal only                        | Yes, but can't run code     |
+| **Engine choice**      | Claude ✕ Kimi ✕ Codex, three engines                                                                       | One at a time                        | None, API calls only        |
+| **Subscription login** | All three native subscriptions work directly                                                               | One at a time                        | Subscriptions not supported |
+| **Code capabilities**  | Full Agent SDK (Read/Write/Edit/Bash/MCP)                                                                  | Full                                 | None                        |
+| **Multi-agent**        | Agent Bus + task delegation + runtime creation                                                             | Single session                       | Yes, but closed ecosystem   |
+| **Shared memory**      | MetaMemory with FTS + auto-sync to Wiki                                                                    | None                                 | None                        |
+| **Scheduling**         | CC-native `CronCreate` / `/loop` work out of the box; opt-in `/metaschedule` for cross-restart persistence | Native `CronCreate` / `/loop` only   | Yes                         |
+| **Autonomous**         | bypassPermissions / yoloMode, fully automated                                                              | Requires human approval              | Limited to workflows        |
+| **Open source**        | MIT, fully controllable                                                                                    | CLI is open source                   | Closed-source SaaS          |
 
 ## Multi-Platform Access
 
@@ -145,18 +146,18 @@ Feishu/TG/WeChat → IM Bridge → Engine Router ──┬─→ Claude Code Age
 
 The engine layer is abstracted — Kimi's event stream and Codex's JSONL stream are both translated into Claude-shaped `SDKMessage` objects, so streaming cards, tool-call tracking, MetaMemory/Scheduler/Agent Bus behave identically across all three engines.
 
-| Client | Use Case | Key Features |
-|--------|----------|-------------|
-| **Feishu/Lark** | Work, team collaboration | Streaming interactive cards, @mention routing, Wiki auto-sync |
-| **Telegram** | Personal / international | 30-second setup, long polling (no public IP), group + private chat |
-| **Web UI** | Browser, voice conversations | Phone call mode (VAD), RTC calls, MetaMemory browser, team dashboard |
+| Client          | Use Case                     | Key Features                                                         |
+| --------------- | ---------------------------- | -------------------------------------------------------------------- |
+| **Feishu/Lark** | Work, team collaboration     | Streaming interactive cards, @mention routing, Wiki auto-sync        |
+| **Telegram**    | Personal / international     | 30-second setup, long polling (no public IP), group + private chat   |
+| **Web UI**      | Browser, voice conversations | Phone call mode (VAD), RTC calls, MetaMemory browser, team dashboard |
 
 ## Web UI
 
-| Pillar | Component | What it does |
-|--------|-----------|-------------|
-| **Supervised** | IM Bridge | Real-time streaming cards show every tool call. Humans see everything agents do |
-| **Self-Improving** | MetaMemory | Shared knowledge store. Agents write what they learn, other agents retrieve it |
+| Pillar                 | Component                                                          | What it does                                                                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Supervised**         | IM Bridge                                                          | Real-time streaming cards show every tool call. Humans see everything agents do                                                                                        |
+| **Self-Improving**     | MetaMemory                                                         | Shared knowledge store. Agents write what they learn, other agents retrieve it                                                                                         |
 | **Agent Organization** | Agent Bus + CC-native scheduling (opt-in MetaSkill / MetaSchedule) | Agents delegate tasks and spin up new bots on demand; CC's built-in `CronCreate` / `/loop` cover scheduling, and opt-in `/metaschedule` adds cross-restart persistence |
 
 Full-featured browser-based chat interface. Access at `https://your-server/web/` after starting MetaBot.
@@ -178,21 +179,21 @@ Full-featured browser-based chat interface. Access at `https://your-server/web/`
 
 ## Core Components
 
-| Component | Description |
-|-----------|-------------|
-| **Triple Engine Kernel** | Each bot independently chooses Claude Code / Kimi Code / Codex CLI — full tool stack (Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP) in autonomous mode |
-| **Persistent Sessions & Goal Loops** | One Claude process per chat — `/goal` keeps the agent auto-driving across turns until a condition is met; teammates and background tasks survive between turns |
-| **Agent Teams** | A lead agent spawns specialist teammates in parallel, routes tasks between them, and aggregates results — all in one Feishu chat |
-| **CC-Native Scheduling** | Use Claude Code's built-in `CronCreate` and `/loop` directly — zero MetaBot setup, runs in-session |
-| **MetaMemory** | Embedded SQLite knowledge store with full-text search, Web UI, auto-syncs to Feishu Wiki |
-| **IM Bridge** | Chat with any agent from Feishu, Telegram, or WeChat (including mobile). Streaming cards + tool call tracking |
-| **Agent Bus** | Agents talk to each other via `mb talk`. Create/remove bots at runtime |
-| **MetaSchedule (opt-in)** | Persistent server-side scheduler — cron + one-shot, survives restarts, exposes HTTP API + `mb schedule` CLI. Not installed by default; enable with `cp src/skills/metaschedule/SKILL.md ~/.claude/skills/metaschedule/` |
-| **MetaSkill (opt-in)** | Agent factory. `/metaskill` generates portable agent teams. Not installed by default; enable with `cp -r src/skills/metaskill ~/.claude/skills/` |
-| **Feishu Lark CLI** | 200+ commands covering docs, messaging, calendar, tasks, and 8 more domains. 19 AI Agent Skills |
-| **Skill Hub** | Cross-instance skill sharing registry. `mb skills` to publish, discover, and install skills with FTS5 search |
-| **Peers** | Cross-instance bot discovery and task routing. `mb talk alice/backend-bot` routes automatically |
-| **Voice Assistant** | Jarvis mode -- "Hey Siri, Jarvis" from AirPods for hands-free agent control |
+| Component                            | Description                                                                                                                                                                                                             |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Triple Engine Kernel**             | Each bot independently chooses Claude Code / Kimi Code / Codex CLI — full tool stack (Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP) in autonomous mode                                                                  |
+| **Persistent Sessions & Goal Loops** | One Claude process per chat — `/goal` keeps the agent auto-driving across turns until a condition is met; teammates and background tasks survive between turns                                                          |
+| **Agent Teams**                      | A lead agent spawns specialist teammates in parallel, routes tasks between them, and aggregates results — all in one Feishu chat                                                                                        |
+| **CC-Native Scheduling**             | Use Claude Code's built-in `CronCreate` and `/loop` directly — zero MetaBot setup, runs in-session                                                                                                                      |
+| **MetaMemory**                       | Embedded SQLite knowledge store with full-text search, Web UI, auto-syncs to Feishu Wiki                                                                                                                                |
+| **IM Bridge**                        | Chat with any agent from Feishu, Telegram, or WeChat (including mobile). Streaming cards + tool call tracking                                                                                                           |
+| **Agent Bus**                        | Agents talk to each other via `mb talk`. Create/remove bots at runtime                                                                                                                                                  |
+| **MetaSchedule (opt-in)**            | Persistent server-side scheduler — cron + one-shot, survives restarts, exposes HTTP API + `mb schedule` CLI. Not installed by default; enable with `cp src/skills/metaschedule/SKILL.md ~/.claude/skills/metaschedule/` |
+| **MetaSkill (opt-in)**               | Agent factory. `/metaskill` generates portable agent teams. Not installed by default; enable with `cp -r src/skills/metaskill ~/.claude/skills/`                                                                        |
+| **Feishu Lark CLI**                  | 200+ commands covering docs, messaging, calendar, tasks, and 8 more domains. 19 AI Agent Skills                                                                                                                         |
+| **Skill Hub**                        | Cross-instance skill sharing registry. `mb skills` to publish, discover, and install skills with FTS5 search                                                                                                            |
+| **Peers**                            | Cross-instance bot discovery and task routing. `mb talk alice/backend-bot` routes automatically                                                                                                                         |
+| **Voice Assistant**                  | Jarvis mode -- "Hey Siri, Jarvis" from AirPods for hands-free agent control                                                                                                                                             |
 
 ## Quick Start
 
@@ -210,7 +211,7 @@ Full-featured browser-based chat interface. Access at `https://your-server/web/`
 ### Feishu/Lark
 
 1. Create app at [open.feishu.cn](https://open.feishu.cn/) → add Bot capability
-2. Enable permissions: `im:message`, `im:message:readonly`, `im:resource`, `im:chat:readonly`
+2. Enable permissions: `im:message`, `im:message:readonly`, `im:message.group_msg` (unmentioned group messages), `im:resource`, `im:chat:readonly`
 3. Start MetaBot, then enable persistent connection + `im.message.receive_v1` event
 4. Publish the app
 
@@ -309,11 +310,13 @@ checks service health, reviews overnight error logs, and posts a summary.
 <details>
 <summary><strong>DM vs Group Chat</strong></summary>
 
-| Scenario | @mention | Notes |
-|----------|----------|-------|
-| **Direct message** | Not needed | All messages go to the bot |
-| **1-on-1 group** (you + bot, 2 members) | Not needed | Auto-detected as DM-like |
-| **Multi-member group** | @Bot required | Only @mentioned messages trigger a response |
+| Scenario                                | @mention      | Notes                                       |
+| --------------------------------------- | ------------- | ------------------------------------------- |
+| **Direct message**                      | Not needed    | All messages go to the bot                  |
+| **1-on-1 group** (you + bot, 2 members) | Not needed    | Auto-detected as DM-like                    |
+| **Multi-member group**                  | @Bot required | Only @mentioned messages trigger a response |
+
+> To auto-respond to unmentioned group messages, also set `"groupNoMention": true` in `bots.json` and grant the Feishu app **Get all messages in groups** (usually `im:message.group_msg`).
 
 > **Tip**: Create a 2-person group with just you and the bot. No @mention needed, plus you get group features like pinning.
 
@@ -340,36 +343,40 @@ Supported: text, images (Claude multimodal), files (PDF/code/docs), rich text (P
 
 ```json
 {
-  "feishuBots": [{
-    "name": "metabot",
-    "feishuAppId": "cli_xxx",
-    "feishuAppSecret": "...",
-    "defaultWorkingDirectory": "/home/user/project"
-  }],
-  "telegramBots": [{
-    "name": "tg-bot",
-    "telegramBotToken": "123456:ABC...",
-    "defaultWorkingDirectory": "/home/user/project"
-  }]
+  "feishuBots": [
+    {
+      "name": "metabot",
+      "feishuAppId": "cli_xxx",
+      "feishuAppSecret": "...",
+      "defaultWorkingDirectory": "/home/user/project"
+    }
+  ],
+  "telegramBots": [
+    {
+      "name": "tg-bot",
+      "telegramBotToken": "123456:ABC...",
+      "defaultWorkingDirectory": "/home/user/project"
+    }
+  ]
 }
 ```
 
 <details>
 <summary><strong>All bot config fields</strong></summary>
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `name` | Yes | — | Bot identifier |
-| `defaultWorkingDirectory` | Yes | — | Working directory for Claude |
-| `feishuAppId` / `feishuAppSecret` | Feishu | — | Feishu app credentials |
-| `telegramBotToken` | Telegram | — | Telegram bot token |
-| `wechatBotToken` | WeChat (opt) | — | Pre-authenticated iLink token (omit for QR login) |
-| `maxTurns` / `maxBudgetUsd` | No | unlimited | Execution limits |
-| `model` | No | SDK default | Claude model |
-| `apiKey` | No | — | Anthropic API key (leave unset for dynamic auth via cc-switch) |
-| `manager.enabled` | No | false | Enable manager/worker MCP tools for this bot |
-| `manager.workers` | No | [] | Explicit local worker bot names this manager may delegate to |
-| `manager.allowAllLocalWorkers` | No | false | Allow all local bots except self as workers |
+| Field                             | Required     | Default     | Description                                                    |
+| --------------------------------- | ------------ | ----------- | -------------------------------------------------------------- |
+| `name`                            | Yes          | —           | Bot identifier                                                 |
+| `defaultWorkingDirectory`         | Yes          | —           | Working directory for Claude                                   |
+| `feishuAppId` / `feishuAppSecret` | Feishu       | —           | Feishu app credentials                                         |
+| `telegramBotToken`                | Telegram     | —           | Telegram bot token                                             |
+| `wechatBotToken`                  | WeChat (opt) | —           | Pre-authenticated iLink token (omit for QR login)              |
+| `maxTurns` / `maxBudgetUsd`       | No           | unlimited   | Execution limits                                               |
+| `model`                           | No           | SDK default | Claude model                                                   |
+| `apiKey`                          | No           | —           | Anthropic API key (leave unset for dynamic auth via cc-switch) |
+| `manager.enabled`                 | No           | false       | Enable manager/worker MCP tools for this bot                   |
+| `manager.workers`                 | No           | []          | Explicit local worker bot names this manager may delegate to   |
+| `manager.allowAllLocalWorkers`    | No           | false       | Allow all local bots except self as workers                    |
 
 Example manager config:
 
@@ -391,23 +398,23 @@ A manager-enabled Claude bot receives `metabot-manager` tools for async worker d
 <details>
 <summary><strong>Environment variables (.env)</strong></summary>
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `API_PORT` | 9100 | HTTP API port |
-| `API_SECRET` | — | Bearer token auth (protects API + Web UI). Generate one with `openssl rand -hex 32` |
-| `MEMORY_ENABLED` | true | Enable MetaMemory |
-| `MEMORY_PORT` | 8100 | MetaMemory port |
-| `MEMORY_ADMIN_TOKEN` | — | Admin token (full access) |
-| `MEMORY_TOKEN` | — | Reader token (shared folders only) |
-| `WIKI_SYNC_ENABLED` | true | Enable MetaMemory→Wiki sync |
-| `WIKI_SPACE_NAME` | MetaMemory | Wiki space name |
-| `WIKI_AUTO_SYNC` | true | Auto-sync on changes |
-| `VOLCENGINE_TTS_APPID` | — | Doubao voice (TTS + STT) |
-| `VOLCENGINE_TTS_ACCESS_KEY` | — | Doubao voice key |
-| `METABOT_URL` | `http://localhost:9100` | MetaBot API URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
-| `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory server URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
-| `METABOT_PEERS` | — | Peer MetaBot URLs (comma-separated). Prefer HTTPS for internet-reachable peers |
-| `LOG_LEVEL` | info | Log level |
+| Variable                    | Default                 | Description                                                                                               |
+| --------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `API_PORT`                  | 9100                    | HTTP API port                                                                                             |
+| `API_SECRET`                | —                       | Bearer token auth (protects API + Web UI). Generate one with `openssl rand -hex 32`                       |
+| `MEMORY_ENABLED`            | true                    | Enable MetaMemory                                                                                         |
+| `MEMORY_PORT`               | 8100                    | MetaMemory port                                                                                           |
+| `MEMORY_ADMIN_TOKEN`        | —                       | Admin token (full access)                                                                                 |
+| `MEMORY_TOKEN`              | —                       | Reader token (shared folders only)                                                                        |
+| `WIKI_SYNC_ENABLED`         | true                    | Enable MetaMemory→Wiki sync                                                                               |
+| `WIKI_SPACE_NAME`           | MetaMemory              | Wiki space name                                                                                           |
+| `WIKI_AUTO_SYNC`            | true                    | Auto-sync on changes                                                                                      |
+| `VOLCENGINE_TTS_APPID`      | —                       | Doubao voice (TTS + STT)                                                                                  |
+| `VOLCENGINE_TTS_ACCESS_KEY` | —                       | Doubao voice key                                                                                          |
+| `METABOT_URL`               | `http://localhost:9100` | MetaBot API URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address       |
+| `META_MEMORY_URL`           | `http://localhost:8100` | MetaMemory server URL. Default is local HTTP; for remote access prefer HTTPS or a private-network address |
+| `METABOT_PEERS`             | —                       | Peer MetaBot URLs (comma-separated). Prefer HTTPS for internet-reachable peers                            |
+| `LOG_LEVEL`                 | info                    | Log level                                                                                                 |
 
 </details>
 
@@ -449,18 +456,18 @@ MetaBot runs Claude Code in `bypassPermissions` mode — no interactive approval
 
 ## Chat Commands
 
-| Command | Description |
-|---------|-------------|
-| `/reset` | Clear session |
-| `/stop` | Abort current task |
-| `/status` | Session info (includes current model) |
-| `/goal <condition>` | Set a goal the agent keeps pursuing across turns. `/goal clear` to stop |
-| `/model` | Show current engine/model; `/model list` — available engines/models; `/model claude`, `/model kimi`, or `/model codex` — switch engine; `/model <name>` — set model; `/model reset` — restore default |
-| `/memory list` | Browse knowledge tree |
-| `/memory search <query>` | Search knowledge base |
-| `/sync` | Sync MetaMemory to Feishu Wiki |
-| `/metaskill ...` | Generate agent teams, agents, or skills (opt-in skill — not installed by default) |
-| `/help` | Show help |
+| Command                  | Description                                                                                                                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/reset`                 | Clear session                                                                                                                                                                                         |
+| `/stop`                  | Abort current task                                                                                                                                                                                    |
+| `/status`                | Session info (includes current model)                                                                                                                                                                 |
+| `/goal <condition>`      | Set a goal the agent keeps pursuing across turns. `/goal clear` to stop                                                                                                                               |
+| `/model`                 | Show current engine/model; `/model list` — available engines/models; `/model claude`, `/model kimi`, or `/model codex` — switch engine; `/model <name>` — set model; `/model reset` — restore default |
+| `/memory list`           | Browse knowledge tree                                                                                                                                                                                 |
+| `/memory search <query>` | Search knowledge base                                                                                                                                                                                 |
+| `/sync`                  | Sync MetaMemory to Feishu Wiki                                                                                                                                                                        |
+| `/metaskill ...`         | Generate agent teams, agents, or skills (opt-in skill — not installed by default)                                                                                                                     |
+| `/help`                  | Show help                                                                                                                                                                                             |
 
 > **Model switching**: Each session can pick its own model. Append `[1m]` to the model name to enable the 1M context window (only Opus 4.7/4.6 and Sonnet 4.6 support it), e.g. `/model claude-opus-4-7[1m]`. OAuth/Pro-Max users must use this suffix — the SDK silently drops beta headers under that auth mode.
 > **Codex skills**: Slash invocations like `/<skill> ...` are auto-rewritten to Codex's `$<skill> ...` form whenever the active session runs on Codex.
@@ -468,28 +475,28 @@ MetaBot runs Claude Code in `bypassPermissions` mode — no interactive approval
 <details>
 <summary><strong>API Reference</strong></summary>
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/health` | Health check |
-| `GET` | `/api/bots` | List bots (local + peer) |
-| `POST` | `/api/bots` | Create bot at runtime |
-| `DELETE` | `/api/bots/:name` | Remove bot |
-| `POST` | `/api/talk` | Talk to a bot (auto-routes to peers) |
-| `GET` | `/api/peers` | List peers and status |
-| `POST` | `/api/schedule` | Schedule task |
-| `GET` | `/api/schedule` | List scheduled tasks |
-| `PATCH` | `/api/schedule/:id` | Update task |
-| `DELETE` | `/api/schedule/:id` | Cancel task |
-| `POST` | `/api/sync` | Trigger Wiki sync |
-| `GET` | `/api/stats` | Cost & usage stats |
-| `GET` | `/api/metrics` | Prometheus metrics |
-| `POST` | `/api/tts` | Text-to-speech |
-| `GET` | `/api/skills` | List skills (local + peer) |
-| `GET` | `/api/skills/search?q=` | Full-text search skills |
-| `GET` | `/api/skills/:name` | Get skill details |
-| `POST` | `/api/skills` | Publish a skill |
-| `POST` | `/api/skills/:name/install` | Install skill to a bot |
-| `DELETE` | `/api/skills/:name` | Remove a skill |
+| Method   | Path                        | Description                          |
+| -------- | --------------------------- | ------------------------------------ |
+| `GET`    | `/api/health`               | Health check                         |
+| `GET`    | `/api/bots`                 | List bots (local + peer)             |
+| `POST`   | `/api/bots`                 | Create bot at runtime                |
+| `DELETE` | `/api/bots/:name`           | Remove bot                           |
+| `POST`   | `/api/talk`                 | Talk to a bot (auto-routes to peers) |
+| `GET`    | `/api/peers`                | List peers and status                |
+| `POST`   | `/api/schedule`             | Schedule task                        |
+| `GET`    | `/api/schedule`             | List scheduled tasks                 |
+| `PATCH`  | `/api/schedule/:id`         | Update task                          |
+| `DELETE` | `/api/schedule/:id`         | Cancel task                          |
+| `POST`   | `/api/sync`                 | Trigger Wiki sync                    |
+| `GET`    | `/api/stats`                | Cost & usage stats                   |
+| `GET`    | `/api/metrics`              | Prometheus metrics                   |
+| `POST`   | `/api/tts`                  | Text-to-speech                       |
+| `GET`    | `/api/skills`               | List skills (local + peer)           |
+| `GET`    | `/api/skills/search?q=`     | Full-text search skills              |
+| `GET`    | `/api/skills/:name`         | Get skill details                    |
+| `POST`   | `/api/skills`               | Publish a skill                      |
+| `POST`   | `/api/skills/:name/install` | Install skill to a bot               |
+| `DELETE` | `/api/skills/:name`         | Remove a skill                       |
 
 </details>
 

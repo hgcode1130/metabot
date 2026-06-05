@@ -37,17 +37,24 @@ metabot restart
 
 ## Bot 在群聊中不回复
 
-Bot 在群聊中仅在被 **@提及** 时响应。私聊中回复所有消息。这是设计如此。
+默认情况下，Bot 在群聊中仅在被 **@提及** 时响应。私聊中回复所有消息。
 
 例外：**2 人群**（1 个用户 + 1 个 Bot）视为私聊 — 无需 @提及。
+
+如果已在 `bots.json` 中设置 `"groupNoMention": true` 但群里不 @ 仍无响应，先看日志：
+
+- 有 `Received message` 或 `Ignoring group message without @mention`：MetaBot 收到了事件，再排查本地配置。
+- 没有任何消息日志：飞书没有把未 @ 的群消息推给应用，MetaBot 侧无法处理。
+
+飞书对 `im.message.receive_v1` 会按应用权限决定推送范围。要收到未 @ 的群聊消息，应用必须开启 **获取群组中所有消息** 权限（控制台里通常显示为 `im:message.group_msg`），并订阅 **接收消息 v2.0**（`im.message.receive_v1`），然后重新发布/安装应用。
 
 ## 常见问题
 
 **需要公网 IP 吗？**
-:   不需要。飞书用 WebSocket，Telegram 用长轮询。不需要入站端口。
+: 不需要。飞书用 WebSocket，Telegram 用长轮询。不需要入站端口。
 
 **可以用国产模型吗？**
-:   可以。支持 Kimi、DeepSeek、GLM 等 Anthropic 兼容 API。设置 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`。
+: 可以。支持 Kimi、DeepSeek、GLM 等 Anthropic 兼容 API。设置 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`。
 
 **Agent 间通信是实时的吗？**
-:   目前是同步请求-响应模式，通过 Agent 总线。Agent 通过 `mb talk` 或 `/api/talk` 互相对话。异步双向协议在规划中。
+: 目前是同步请求-响应模式，通过 Agent 总线。Agent 通过 `mb talk` 或 `/api/talk` 互相对话。异步双向协议在规划中。

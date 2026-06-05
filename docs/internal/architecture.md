@@ -15,7 +15,7 @@ Web Browser → WebSocket (/ws) → ws-server.ts → MessageBridge.executeApiTas
 
 - **`src/index.ts`** — Entrypoint. Creates Feishu WS client, fetches bot info for @mention detection, wires up the event dispatcher and bridge, handles graceful shutdown.
 - **`src/config.ts`** — Loads config. `BotConfig` is the per-bot type; `AppConfig` wraps `{ bots, log }`. `loadAppConfig()` reads `BOTS_CONFIG` JSON file or falls back to single-bot mode from env vars.
-- **`src/feishu/event-handler.ts`** — Registers `im.message.receive_v1` on the Lark `EventDispatcher`. Handles text/image parsing, @mention stripping, group chat filtering (only responds when @mentioned, except in 2-member groups which are treated like DMs). Exports `IncomingMessage` type.
+- **`src/feishu/event-handler.ts`** — Registers `im.message.receive_v1` on the Lark `EventDispatcher`. Handles text/image parsing, @mention stripping, and group chat filtering. By default it responds to @mentions plus 2-member groups; `groupNoMention` processes unmentioned group messages only when Feishu delivers those events. Exports `IncomingMessage` type.
 - **`src/bridge/message-bridge.ts`** — Core orchestrator. Routes commands (`/reset`, `/stop`, `/status`, `/help`, `/memory`), manages running tasks per chat (one task at a time per `chatId`), executes Claude queries with streaming card updates, handles image input/output, enforces 1-hour timeout.
 - **`src/memory/memory-client.ts`** — Lightweight HTTP client for the MetaMemory server. Used by `/memory` commands (list, search, status) for quick Feishu responses without spawning Claude.
 - **`src/claude/executor.ts`** — Wraps `query()` from the Agent SDK as an async generator yielding `SDKMessage`. Configures permissionMode, allowedTools, MCP settings, session resume.
@@ -46,6 +46,7 @@ Key module: **`src/bridge/outputs-manager.ts`** — Encapsulates the outputs dir
 One-way sync from MetaMemory documents to a Feishu Wiki space. The folder tree in MetaMemory maps to wiki nodes; each document becomes a Feishu docx page. Content change detection uses hash comparison for incremental sync.
 
 **Key modules:**
+
 - **`src/sync/doc-sync.ts`** — Core sync service. `DocSync` class with `syncAll()` (full sync), `syncDocument(docId)` (incremental), and `startAutoSync()` (event-driven). Manages wiki space creation, folder node hierarchy, document content writing via docx block API.
 - **`src/sync/sync-store.ts`** — SQLite persistence for sync mappings (MetaMemory path ↔ Feishu node token). Tables: `sync_config`, `document_mappings`, `folder_mappings`.
 - **`src/sync/markdown-to-blocks.ts`** — Converts Markdown to Feishu document block structures. Handles headings, code blocks, lists, tables, quotes, todos, inline formatting.
@@ -58,6 +59,7 @@ One-way sync from MetaMemory documents to a Feishu Wiki space. The folder tree i
 **API endpoints:** `POST /api/sync` (trigger), `GET /api/sync` (status), `POST /api/sync/document` (single doc sync), `GET /api/feishu/document` (read Feishu doc).
 
 **Environment variables:**
+
 - `FEISHU_SERVICE_APP_ID` / `FEISHU_SERVICE_APP_SECRET` — Dedicated Feishu app for wiki sync & doc reader (falls back to first Feishu bot if not set)
 - `WIKI_SYNC_ENABLED` — Set to `false` to disable (default: enabled when service app or Feishu bots exist)
 - `WIKI_SPACE_NAME` — Wiki space name (default: `MetaMemory`)
@@ -80,6 +82,7 @@ Read Feishu documents (standalone docx and wiki pages) and convert them to Markd
 **Voice mode (`voiceMode=true`)**: Prepends a concise-response instruction to the prompt and limits agent execution to `maxTurns=1` for faster responses. Designed for real-time phone call interaction — responses are 1-2 spoken sentences, no tool use, no markdown.
 
 **Web Call Mode**: The web UI (`ChatView.tsx`) includes a phone call overlay activated by the phone icon. Features:
+
 - **Voice Activity Detection (VAD)** — Uses Web Audio API `AnalyserNode` to detect speech. Auto-stops recording after 1.8s of silence.
 - **Auto-cycling** — Record → process → play response → auto-record again (like a real phone call).
 - **Mobile audio playback** — Uses `AudioContext` created during user gesture (tap) to bypass iOS/Android autoplay restrictions. Falls back to HTML Audio element.
@@ -100,12 +103,14 @@ A centralized skill registry that allows bots to publish, discover, and install 
 **Architecture**: SQLite + FTS5 store (same pattern as MetaMemory/SyncStore). Skills are stored with SKILL.md content + optional `references/` tar bundle. Cross-instance discovery via PeerManager polling.
 
 **Key modules:**
+
 - **`src/api/skill-hub-store.ts`** — `SkillHubStore` class with SQLite backend. FTS5 full-text search across name, description, tags, and content. Methods: `publish()` (upsert, bumps version), `get()`, `list()`, `search()`, `remove()`, `getContent()`.
 - **`src/api/routes/skill-hub-routes.ts`** — REST API endpoints for skill CRUD, publish-from-bot, install, and search.
 - **`src/api/skills-installer.ts`** — `installSkillFromHub()` writes SKILL.md + extracts references tar to a bot's `.claude/skills/` directory.
 - **`src/skills/skill-hub/SKILL.md`** — Bot-facing skill for autonomous skill discovery and installation.
 
 **API endpoints:**
+
 - `GET /api/skills` — List all skills (local + peer)
 - `GET /api/skills/search?q=` — Full-text search
 - `GET /api/skills/:name` — Get skill details (falls back to peers)
@@ -115,6 +120,7 @@ A centralized skill registry that allows bots to publish, discover, and install 
 - `DELETE /api/skills/:name` — Remove a skill
 
 **CLI (`mb` shortcut):**
+
 ```bash
 mb skills                                  # List all skills
 mb skills search <query>                   # Search by keyword
@@ -131,6 +137,7 @@ mb skills remove <name>                    # Unpublish
 Manager-enabled bots (`config.manager.enabled: true`) receive an in-process `metabot-manager` MCP server during Claude execution. The manager tools are scoped to the current `{ managerBotName, managerChatId }` and support listing allowed workers, async task dispatch, status/result lookup, cancellation, and persistent reminders.
 
 **Key modules:**
+
 - `src/api/manager-store.ts` — SQLite/WAL task trace store under `~/.metabot/manager.db`. Persists `taskId`, `traceId`, manager/worker scope, status, timestamps, cost/duration, result/error, and append-only events.
 - `src/api/manager-service.ts` — Validates manager/worker permissions, generates filesystem-safe synthetic worker chat IDs, serializes tasks per worker session while allowing different workers to run concurrently, and wraps `TaskScheduler` for manager-owned reminders.
 - `src/engines/claude/manager-mcp.ts` — Claude Agent SDK in-process MCP tools exposed as `mcp__metabot-manager__*`.
@@ -144,7 +151,7 @@ Manager-enabled bots (`config.manager.enabled: true`) receive an in-process `met
 
 ## Session Isolation
 
-Sessions are keyed by `chatId` (not `userId`), so each group chat and DM gets its own independent session, working directory, and conversation history. Group chats with exactly 2 members (1 user + 1 bot) are treated like DMs — no @mention required. This lets users "fork" a bot by creating multiple small group chats, each with its own session. The member count is cached for 5 minutes to avoid excessive API calls.
+Sessions are keyed by `chatId` (not `userId`), so each group chat and DM gets its own independent session, working directory, and conversation history. Group chats with exactly 2 members (1 user + 1 bot) are treated like DMs — no @mention required when Feishu delivers the event. This lets users "fork" a bot by creating multiple small group chats, each with its own session. The member count is cached for 5 minutes to avoid excessive API calls.
 
 ## Web Platform
 
@@ -159,6 +166,7 @@ A full-featured React SPA served at `/web/` with real-time WebSocket streaming. 
 **Features**: Real-time streaming chat with tool call display, Markdown + syntax highlighting, interactive pending questions, session management, MetaMemory browser, phone call mode (voice with VAD), dark/light theme, responsive design.
 
 **Key frontend files:**
+
 - **`web/src/store.ts`** — Zustand store (auth, sessions, bots, theme, navigation)
 - **`web/src/hooks/useWebSocket.ts`** — WebSocket with auto-reconnect + exponential backoff
 - **`web/src/components/ChatView.tsx`** — Main chat interface with streaming + phone call overlay (VAD, auto-cycling, Web Audio playback)

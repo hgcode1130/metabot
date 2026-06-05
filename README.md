@@ -4,7 +4,7 @@
 
 ### 在飞书 / Telegram / 微信上用手机控制 Claude Code、Kimi Code 或 Codex CLI
 
-*写代码 · 管 Agent · 自动化一切*
+_写代码 · 管 Agent · 自动化一切_
 
 <p>
   <a href="https://github.com/xvirobotics/metabot/actions"><img src="https://img.shields.io/github/actions/workflow/status/xvirobotics/metabot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=github" alt="CI"></a>
@@ -60,17 +60,18 @@ curl -fsSL https://raw.githubusercontent.com/xvirobotics/metabot/main/install.sh
 
 MetaBot 不是只绑定一家 — 三大顶级 AI 编码 Agent 都内置原生支持，**你的订阅直接用**。
 
-| | **Claude Code**（Anthropic） | **Kimi Code**（Moonshot） | **Codex CLI**（OpenAI） |
-|---|---|---|---|
-| **订阅直连** | ✅ `claude login` OAuth | ✅ `kimi login` | ✅ `codex login`，走 ChatGPT 订阅 |
-| **API Key 兜底** | ✅ `ANTHROPIC_API_KEY` / 第三方 Anthropic 兼容端 | ✅ Moonshot API Key | ✅ `OPENAI_API_KEY` / Codex profile |
-| **上下文窗口** | 200k（Opus/Sonnet 可选 1M） | 256k（kimi-for-coding） | 400k（gpt-5.x-codex） |
-| **工具能力** | Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP | 同上（Kimi CLI 原生 + `.claude/skills/` 自动发现） | Codex CLI 原生工具链 + `.codex/skills/` 自动发现 |
-| **自主运行模式** | `bypassPermissions` | `yoloMode`（等价） | 默认 `--sandbox danger-full-access`，避免无 user namespace 环境下的 `bwrap` 失败 |
-| **子 Agent** | `.claude/agents/*.md` 自动加载 | 仅内置 `default` / `okabe` | 暂不支持项目子 Agent；把角色/路由写进 `AGENTS.md` |
-| **工作区说明** | `CLAUDE.md` | `AGENTS.md`（安装器自动建软链） | `AGENTS.md`（Codex 官方约定） |
+|                  | **Claude Code**（Anthropic）                     | **Kimi Code**（Moonshot）                          | **Codex CLI**（OpenAI）                                                          |
+| ---------------- | ------------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **订阅直连**     | ✅ `claude login` OAuth                          | ✅ `kimi login`                                    | ✅ `codex login`，走 ChatGPT 订阅                                                |
+| **API Key 兜底** | ✅ `ANTHROPIC_API_KEY` / 第三方 Anthropic 兼容端 | ✅ Moonshot API Key                                | ✅ `OPENAI_API_KEY` / Codex profile                                              |
+| **上下文窗口**   | 200k（Opus/Sonnet 可选 1M）                      | 256k（kimi-for-coding）                            | 400k（gpt-5.x-codex）                                                            |
+| **工具能力**     | Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP     | 同上（Kimi CLI 原生 + `.claude/skills/` 自动发现） | Codex CLI 原生工具链 + `.codex/skills/` 自动发现                                 |
+| **自主运行模式** | `bypassPermissions`                              | `yoloMode`（等价）                                 | 默认 `--sandbox danger-full-access`，避免无 user namespace 环境下的 `bwrap` 失败 |
+| **子 Agent**     | `.claude/agents/*.md` 自动加载                   | 仅内置 `default` / `okabe`                         | 暂不支持项目子 Agent；把角色/路由写进 `AGENTS.md`                                |
+| **工作区说明**   | `CLAUDE.md`                                      | `AGENTS.md`（安装器自动建软链）                    | `AGENTS.md`（Codex 官方约定）                                                    |
 
 **配置只需一行** — 每个 Bot 独立选引擎：
+
 ```json
 { "name": "bulma", "engine": "kimi",   "kimi": { "thinking": true } }
 { "name": "goku",  "engine": "claude" }
@@ -83,11 +84,11 @@ Codex 支持通过本机 `codex exec --json` CLI 接入，并使用 `codex exec 
 
 Claude/Kimi 和 Codex 的发现路径不同。MetaBot 安装、更新和 Skill Hub 安装时会自动镜像内置 skills：
 
-| 内容 | Claude / Kimi | Codex |
-|------|---------------|-------|
-| 工作区说明 | `CLAUDE.md` | `AGENTS.md` |
-| Skills | `.claude/skills/<name>/SKILL.md` | `.codex/skills/<name>/SKILL.md` |
-| 子 Agent | `.claude/agents/*.md` | 不自动加载；迁移为 `AGENTS.md` 里的角色/路由说明 |
+| 内容       | Claude / Kimi                    | Codex                                            |
+| ---------- | -------------------------------- | ------------------------------------------------ |
+| 工作区说明 | `CLAUDE.md`                      | `AGENTS.md`                                      |
+| Skills     | `.claude/skills/<name>/SKILL.md` | `.codex/skills/<name>/SKILL.md`                  |
+| 子 Agent   | `.claude/agents/*.md`            | 不自动加载；迁移为 `AGENTS.md` 里的角色/路由说明 |
 
 已有项目可以直接让 Codex 帮你迁移：
 
@@ -116,17 +117,17 @@ Claude/Kimi 和 Codex 的发现路径不同。MetaBot 安装、更新和 Skill H
 
 ## 为什么选 MetaBot
 
-| | MetaBot | 直接用 Claude / Kimi / Codex CLI | Dify / Coze |
-|---|---|---|---|
-| **手机控制** | 飞书/TG/微信随时随地 | 只能在终端 | 有，但不能跑代码 |
-| **引擎选择** | Claude ✕ Kimi ✕ Codex 三引擎 | 各自单一 | 无，只能调 API |
-| **订阅直连** | 三家原生订阅都直接用 | 一次只能登一个 | 不支持订阅 |
-| **代码能力** | 完整 Agent SDK（Read/Write/Edit/Bash/MCP） | 完整 | 无 |
-| **多 Agent** | Agent 总线 + 任务委派 + 运行时创建 | 单会话 | 有，但封闭生态 |
-| **共享记忆** | MetaMemory 全文搜索 + 自动同步飞书知识库 | 无 | 无 |
-| **定时任务** | CC 原生 `CronCreate` / `/loop` 即开即用，可选 `/metaschedule` 跨重启持久化 | 仅原生 `CronCreate` / `/loop` | 有 |
-| **自主运行** | bypassPermissions / yoloMode，全自动 | 需要人工确认 | 受限于 workflow |
-| **开源** | MIT，完全可控 | CLI 开源 | 闭源 SaaS |
+|              | MetaBot                                                                    | 直接用 Claude / Kimi / Codex CLI | Dify / Coze      |
+| ------------ | -------------------------------------------------------------------------- | -------------------------------- | ---------------- |
+| **手机控制** | 飞书/TG/微信随时随地                                                       | 只能在终端                       | 有，但不能跑代码 |
+| **引擎选择** | Claude ✕ Kimi ✕ Codex 三引擎                                               | 各自单一                         | 无，只能调 API   |
+| **订阅直连** | 三家原生订阅都直接用                                                       | 一次只能登一个                   | 不支持订阅       |
+| **代码能力** | 完整 Agent SDK（Read/Write/Edit/Bash/MCP）                                 | 完整                             | 无               |
+| **多 Agent** | Agent 总线 + 任务委派 + 运行时创建                                         | 单会话                           | 有，但封闭生态   |
+| **共享记忆** | MetaMemory 全文搜索 + 自动同步飞书知识库                                   | 无                               | 无               |
+| **定时任务** | CC 原生 `CronCreate` / `/loop` 即开即用，可选 `/metaschedule` 跨重启持久化 | 仅原生 `CronCreate` / `/loop`    | 有               |
+| **自主运行** | bypassPermissions / yoloMode，全自动                                       | 需要人工确认                     | 受限于 workflow  |
+| **开源**     | MIT，完全可控                                                              | CLI 开源                         | 闭源 SaaS        |
 
 ## 工作原理
 
@@ -149,16 +150,16 @@ Claude/Kimi 和 Codex 的发现路径不同。MetaBot 安装、更新和 Skill H
 
 MetaBot 支持 4 种方式与你的 Agent 团队交互：
 
-| 客户端 | 场景 | 特色功能 |
-|--------|------|---------|
-| **飞书/Lark** | 工作场景，团队协作 | 流式交互卡片、@mention 路由、知识库自动同步 |
-| **Telegram** | 个人/国际用户 | 30 秒配置、长轮询无需公网 IP、群聊 + 私聊 |
-| **Web UI** | 浏览器端，语音对话 | 电话语音模式（VAD）、RTC 实时通话、MetaMemory 浏览器、团队看板 |
+| 客户端        | 场景               | 特色功能                                                       |
+| ------------- | ------------------ | -------------------------------------------------------------- |
+| **飞书/Lark** | 工作场景，团队协作 | 流式交互卡片、@mention 路由、知识库自动同步                    |
+| **Telegram**  | 个人/国际用户      | 30 秒配置、长轮询无需公网 IP、群聊 + 私聊                      |
+| **Web UI**    | 浏览器端，语音对话 | 电话语音模式（VAD）、RTC 实时通话、MetaMemory 浏览器、团队看板 |
 
-| 支柱 | 组件 | 作用 |
-|------|------|------|
-| **受监督** | IM Bridge | 实时流式卡片展示每一步工具调用。人类看到 Agent 做的一切 |
-| **自我进化** | MetaMemory | 共享知识库。Agent 写入学到的东西，其他 Agent 检索引用 |
+| 支柱           | 组件                                                      | 作用                                                                                                               |
+| -------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **受监督**     | IM Bridge                                                 | 实时流式卡片展示每一步工具调用。人类看到 Agent 做的一切                                                            |
+| **自我进化**   | MetaMemory                                                | 共享知识库。Agent 写入学到的东西，其他 Agent 检索引用                                                              |
 | **Agent 组织** | Agent 总线 + CC 原生调度（可选 MetaSkill / MetaSchedule） | Agent 互相委派任务、按需创建新 Agent；用 CC 内置 `CronCreate` / `/loop` 即可定时；要跨重启可装可选 `/metaschedule` |
 
 ## Web UI
@@ -182,21 +183,21 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 
 ## 核心能力
 
-| 组件 | 一句话说明 |
-|------|-----------|
-| **三引擎内核** | 每个 Bot 独立选 Claude Code / Kimi Code / Codex CLI — 完整工具链（Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP），自主模式运行 |
-| **常驻会话与目标循环** | 每个会话一个常驻 Claude 进程 — `/goal` 让 Agent 在多轮之间持续自驱直到目标达成；团队成员和后台任务跨轮存活 |
-| **Agent 团队（运行时）** | 主导 Agent 并行派遣专家队友，互相路由任务、汇总结果 —— 全部在一个飞书会话中完成 |
-| **CC 原生调度** | 直接用 Claude Code 内置的 `CronCreate` / `/loop` —— 即开即用，会话内最简单 |
-| **MetaMemory** | 内嵌 SQLite 知识库，全文搜索，Web UI，变更自动同步到飞书知识库 |
-| **IM Bridge** | 飞书、Telegram、微信（含手机端）对话任意 Agent，流式卡片 + 工具调用追踪 |
-| **Agent 总线** | Agent 通过 `mb talk` 互相对话，运行时创建/删除 Bot |
+| 组件                     | 一句话说明                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **三引擎内核**           | 每个 Bot 独立选 Claude Code / Kimi Code / Codex CLI — 完整工具链（Read/Write/Edit/Bash/Glob/Grep/WebSearch/MCP），自主模式运行       |
+| **常驻会话与目标循环**   | 每个会话一个常驻 Claude 进程 — `/goal` 让 Agent 在多轮之间持续自驱直到目标达成；团队成员和后台任务跨轮存活                           |
+| **Agent 团队（运行时）** | 主导 Agent 并行派遣专家队友，互相路由任务、汇总结果 —— 全部在一个飞书会话中完成                                                      |
+| **CC 原生调度**          | 直接用 Claude Code 内置的 `CronCreate` / `/loop` —— 即开即用，会话内最简单                                                           |
+| **MetaMemory**           | 内嵌 SQLite 知识库，全文搜索，Web UI，变更自动同步到飞书知识库                                                                       |
+| **IM Bridge**            | 飞书、Telegram、微信（含手机端）对话任意 Agent，流式卡片 + 工具调用追踪                                                              |
+| **Agent 总线**           | Agent 通过 `mb talk` 互相对话，运行时创建/删除 Bot                                                                                   |
 | **MetaSchedule（可选）** | 跨重启的服务端定时调度器，Cron + 一次性延迟，HTTP API + `mb schedule` CLI。默认不装，按需 `cp src/skills/metaschedule/SKILL.md` 启用 |
-| **MetaSkill（可选）** | Agent 工厂。`/metaskill` 一键生成可迁移的 Agent 团队。默认不装，按需 `cp src/skills/metaskill/` 启用 |
-| **飞书 Lark CLI** | 200+ 命令覆盖文档、消息、日历、任务等 11 大业务域，19 个 AI Agent Skills |
-| **Skill Hub** | 跨实例技能共享注册中心。`mb skills` 发布、发现、安装技能，FTS5 全文搜索 |
-| **Peers 联邦** | 跨实例 Bot 发现和任务路由，`mb talk alice/backend-bot` 自动路由 |
-| **语音助手** | Jarvis 模式 — AirPods 说 "Hey Siri, Jarvis" 语音控制 Agent |
+| **MetaSkill（可选）**    | Agent 工厂。`/metaskill` 一键生成可迁移的 Agent 团队。默认不装，按需 `cp src/skills/metaskill/` 启用                                 |
+| **飞书 Lark CLI**        | 200+ 命令覆盖文档、消息、日历、任务等 11 大业务域，19 个 AI Agent Skills                                                             |
+| **Skill Hub**            | 跨实例技能共享注册中心。`mb skills` 发布、发现、安装技能，FTS5 全文搜索                                                              |
+| **Peers 联邦**           | 跨实例 Bot 发现和任务路由，`mb talk alice/backend-bot` 自动路由                                                                      |
+| **语音助手**             | Jarvis 模式 — AirPods 说 "Hey Siri, Jarvis" 语音控制 Agent                                                                           |
 
 ## 快速开始
 
@@ -214,7 +215,7 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 ### 飞书
 
 1. [open.feishu.cn](https://open.feishu.cn/) 创建应用 → 添加「机器人」能力
-2. 开通权限：`im:message`、`im:message:readonly`、`im:resource`、`im:chat:readonly`
+2. 开通权限：`im:message`、`im:message:readonly`、`im:message.group_msg`（未 @ 群消息）、`im:resource`、`im:chat:readonly`
 3. 先启动 MetaBot，再开启「长连接」+ `im.message.receive_v1` 事件
 4. 发布应用
 
@@ -306,11 +307,13 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 <details>
 <summary><strong>私聊 vs 群聊</strong></summary>
 
-| 场景 | @提及 | 说明 |
-|------|-------|------|
-| **私聊** | 不需要 | 所有消息直接发送给 Bot |
-| **1对1 群聊**（你 + Bot 两人群） | 不需要 | 自动识别为类私聊 |
-| **多人群聊** | 需要 @Bot | 只有 @Bot 的消息才会触发回复 |
+| 场景                             | @提及     | 说明                         |
+| -------------------------------- | --------- | ---------------------------- |
+| **私聊**                         | 不需要    | 所有消息直接发送给 Bot       |
+| **1对1 群聊**（你 + Bot 两人群） | 不需要    | 自动识别为类私聊             |
+| **多人群聊**                     | 需要 @Bot | 只有 @Bot 的消息才会触发回复 |
+
+> 未 @ 群聊自动响应还需要在 `bots.json` 设置 `"groupNoMention": true`，并确保飞书应用具备 **获取群组中所有消息** 权限（通常是 `im:message.group_msg`）。
 
 > **推荐**：建一个只有你和 Bot 的两人群聊。不需要每次 @Bot，又能保留群聊的好处（置顶、分类管理）。
 
@@ -337,36 +340,40 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 
 ```json
 {
-  "feishuBots": [{
-    "name": "metabot",
-    "feishuAppId": "cli_xxx",
-    "feishuAppSecret": "...",
-    "defaultWorkingDirectory": "/home/user/project"
-  }],
-  "telegramBots": [{
-    "name": "tg-bot",
-    "telegramBotToken": "123456:ABC...",
-    "defaultWorkingDirectory": "/home/user/project"
-  }]
+  "feishuBots": [
+    {
+      "name": "metabot",
+      "feishuAppId": "cli_xxx",
+      "feishuAppSecret": "...",
+      "defaultWorkingDirectory": "/home/user/project"
+    }
+  ],
+  "telegramBots": [
+    {
+      "name": "tg-bot",
+      "telegramBotToken": "123456:ABC...",
+      "defaultWorkingDirectory": "/home/user/project"
+    }
+  ]
 }
 ```
 
 <details>
 <summary><strong>所有 Bot 配置字段</strong></summary>
 
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|--------|------|
-| `name` | 是 | — | Bot 标识名 |
-| `defaultWorkingDirectory` | 是 | — | Claude 的工作目录 |
-| `feishuAppId` / `feishuAppSecret` | 飞书 | — | 飞书应用凭证 |
-| `telegramBotToken` | Telegram | — | Telegram Bot Token |
-| `wechatBotToken` | 微信(可选) | — | 预认证 iLink token（不填则 QR 登录） |
-| `maxTurns` / `maxBudgetUsd` | 否 | 不限 | 执行限制 |
-| `model` | 否 | SDK 默认 | Claude 模型 |
-| `apiKey` | 否 | — | Anthropic API Key（不设则从 `~/.claude/.credentials.json` 动态读取，兼容 cc-switch） |
-| `manager.enabled` | 否 | false | 为该 Bot 启用 manager/worker MCP 工具 |
-| `manager.workers` | 否 | [] | 该 manager 可派发的本地 worker Bot 白名单 |
-| `manager.allowAllLocalWorkers` | 否 | false | 允许派发给除自己以外的所有本地 Bot |
+| 字段                              | 必填       | 默认值   | 说明                                                                                 |
+| --------------------------------- | ---------- | -------- | ------------------------------------------------------------------------------------ |
+| `name`                            | 是         | —        | Bot 标识名                                                                           |
+| `defaultWorkingDirectory`         | 是         | —        | Claude 的工作目录                                                                    |
+| `feishuAppId` / `feishuAppSecret` | 飞书       | —        | 飞书应用凭证                                                                         |
+| `telegramBotToken`                | Telegram   | —        | Telegram Bot Token                                                                   |
+| `wechatBotToken`                  | 微信(可选) | —        | 预认证 iLink token（不填则 QR 登录）                                                 |
+| `maxTurns` / `maxBudgetUsd`       | 否         | 不限     | 执行限制                                                                             |
+| `model`                           | 否         | SDK 默认 | Claude 模型                                                                          |
+| `apiKey`                          | 否         | —        | Anthropic API Key（不设则从 `~/.claude/.credentials.json` 动态读取，兼容 cc-switch） |
+| `manager.enabled`                 | 否         | false    | 为该 Bot 启用 manager/worker MCP 工具                                                |
+| `manager.workers`                 | 否         | []       | 该 manager 可派发的本地 worker Bot 白名单                                            |
+| `manager.allowAllLocalWorkers`    | 否         | false    | 允许派发给除自己以外的所有本地 Bot                                                   |
 
 Manager 配置示例：
 
@@ -388,23 +395,23 @@ Manager 配置示例：
 <details>
 <summary><strong>环境变量 (.env)</strong></summary>
 
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `API_PORT` | 9100 | HTTP API 端口 |
-| `API_SECRET` | — | Bearer 认证（同时保护 API 和 Web UI） |
-| `MEMORY_ENABLED` | true | 启用 MetaMemory |
-| `MEMORY_PORT` | 8100 | MetaMemory 端口 |
-| `MEMORY_ADMIN_TOKEN` | — | 管理员 Token（完整访问） |
-| `MEMORY_TOKEN` | — | 读者 Token（仅共享文件夹） |
-| `WIKI_SYNC_ENABLED` | true | 启用 MetaMemory→飞书知识库同步 |
-| `WIKI_SPACE_NAME` | MetaMemory | 飞书知识库空间名称 |
-| `WIKI_AUTO_SYNC` | true | MetaMemory 变更时自动同步 |
-| `VOLCENGINE_TTS_APPID` | — | 豆包语音（TTS + STT） |
-| `VOLCENGINE_TTS_ACCESS_KEY` | — | 豆包语音密钥 |
-| `METABOT_URL` | `http://localhost:9100` | MetaBot API 地址 |
-| `META_MEMORY_URL` | `http://localhost:8100` | MetaMemory 服务地址 |
-| `METABOT_PEERS` | — | Peer MetaBot 地址（逗号分隔） |
-| `LOG_LEVEL` | info | 日志级别 |
+| 变量                        | 默认                    | 说明                                  |
+| --------------------------- | ----------------------- | ------------------------------------- |
+| `API_PORT`                  | 9100                    | HTTP API 端口                         |
+| `API_SECRET`                | —                       | Bearer 认证（同时保护 API 和 Web UI） |
+| `MEMORY_ENABLED`            | true                    | 启用 MetaMemory                       |
+| `MEMORY_PORT`               | 8100                    | MetaMemory 端口                       |
+| `MEMORY_ADMIN_TOKEN`        | —                       | 管理员 Token（完整访问）              |
+| `MEMORY_TOKEN`              | —                       | 读者 Token（仅共享文件夹）            |
+| `WIKI_SYNC_ENABLED`         | true                    | 启用 MetaMemory→飞书知识库同步        |
+| `WIKI_SPACE_NAME`           | MetaMemory              | 飞书知识库空间名称                    |
+| `WIKI_AUTO_SYNC`            | true                    | MetaMemory 变更时自动同步             |
+| `VOLCENGINE_TTS_APPID`      | —                       | 豆包语音（TTS + STT）                 |
+| `VOLCENGINE_TTS_ACCESS_KEY` | —                       | 豆包语音密钥                          |
+| `METABOT_URL`               | `http://localhost:9100` | MetaBot API 地址                      |
+| `META_MEMORY_URL`           | `http://localhost:8100` | MetaMemory 服务地址                   |
+| `METABOT_PEERS`             | —                       | Peer MetaBot 地址（逗号分隔）         |
+| `LOG_LEVEL`                 | info                    | 日志级别                              |
 
 </details>
 
@@ -446,18 +453,18 @@ MetaBot 以 `bypassPermissions` 模式运行 Claude Code — 无交互式确认�
 
 ## 聊天命令
 
-| 命令 | 说明 |
-|------|------|
-| `/reset` | 清除会话 |
-| `/stop` | 中止当前任务 |
-| `/status` | 查看会话状态（含当前模型） |
-| `/goal <条件>` | 设置目标，Agent 跨多轮持续推进直到达成。`/goal clear` 停止 |
-| `/model` | 查看当前模型；`/model list` 查看可用模型；`/model <name>` 切换；`/model reset` 恢复默认 |
-| `/memory list` | 浏览知识库目录 |
-| `/memory search 关键词` | 搜索知识库 |
-| `/sync` | 同步 MetaMemory 到飞书知识库 |
-| `/metaskill ...` | 生成 Agent 团队、Agent 或 Skill（可选 skill，默认不装） |
-| `/help` | 帮助 |
+| 命令                    | 说明                                                                                    |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `/reset`                | 清除会话                                                                                |
+| `/stop`                 | 中止当前任务                                                                            |
+| `/status`               | 查看会话状态（含当前模型）                                                              |
+| `/goal <条件>`          | 设置目标，Agent 跨多轮持续推进直到达成。`/goal clear` 停止                              |
+| `/model`                | 查看当前模型；`/model list` 查看可用模型；`/model <name>` 切换；`/model reset` 恢复默认 |
+| `/memory list`          | 浏览知识库目录                                                                          |
+| `/memory search 关键词` | 搜索知识库                                                                              |
+| `/sync`                 | 同步 MetaMemory 到飞书知识库                                                            |
+| `/metaskill ...`        | 生成 Agent 团队、Agent 或 Skill（可选 skill，默认不装）                                 |
+| `/help`                 | 帮助                                                                                    |
 
 > **模型切换**：每个会话可独立设置模型。在模型名后加 `[1m]` 可启用 1M 上下文窗口（仅 Opus 4.7/4.6、Sonnet 4.6 支持），例如 `/model claude-opus-4-7[1m]`。OAuth/Pro-Max 登录用户 SDK 会丢弃 beta flag，`[1m]` 后缀是唯一可靠的 1M 开启方式。
 > **Codex Skill 调用**：飞书里发的 `/<skill> ...` 在 Codex 会话下会被 MetaBot 自动改写成 `$<skill> ...`，例如 `$metaschedule ...`。
@@ -465,28 +472,28 @@ MetaBot 以 `bypassPermissions` 模式运行 Claude Code — 无交互式确认�
 <details>
 <summary><strong>API 参考</strong></summary>
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/health` | 健康检查 |
-| `GET` | `/api/bots` | 列出 Bot（本地 + Peer） |
-| `POST` | `/api/bots` | 运行时创建 Bot |
-| `DELETE` | `/api/bots/:name` | 删除 Bot |
-| `POST` | `/api/talk` | 与 Bot 对话（自动路由到 peer） |
-| `GET` | `/api/peers` | 列出 Peer 及状态 |
-| `POST` | `/api/schedule` | 创建定时任务 |
-| `GET` | `/api/schedule` | 列出定时任务 |
-| `PATCH` | `/api/schedule/:id` | 更新定时任务 |
-| `DELETE` | `/api/schedule/:id` | 取消定时任务 |
-| `POST` | `/api/sync` | 触发 Wiki 同步 |
-| `GET` | `/api/stats` | 费用与使用统计 |
-| `GET` | `/api/metrics` | Prometheus 监控指标 |
-| `POST` | `/api/tts` | 文字转语音 |
-| `GET` | `/api/skills` | 列出技能（本地 + Peer） |
-| `GET` | `/api/skills/search?q=` | 全文搜索技能 |
-| `GET` | `/api/skills/:name` | 获取技能详情 |
-| `POST` | `/api/skills` | 发布技能 |
-| `POST` | `/api/skills/:name/install` | 安装技能到 Bot |
-| `DELETE` | `/api/skills/:name` | 删除技能 |
+| 方法     | 路径                        | 说明                           |
+| -------- | --------------------------- | ------------------------------ |
+| `GET`    | `/api/health`               | 健康检查                       |
+| `GET`    | `/api/bots`                 | 列出 Bot（本地 + Peer）        |
+| `POST`   | `/api/bots`                 | 运行时创建 Bot                 |
+| `DELETE` | `/api/bots/:name`           | 删除 Bot                       |
+| `POST`   | `/api/talk`                 | 与 Bot 对话（自动路由到 peer） |
+| `GET`    | `/api/peers`                | 列出 Peer 及状态               |
+| `POST`   | `/api/schedule`             | 创建定时任务                   |
+| `GET`    | `/api/schedule`             | 列出定时任务                   |
+| `PATCH`  | `/api/schedule/:id`         | 更新定时任务                   |
+| `DELETE` | `/api/schedule/:id`         | 取消定时任务                   |
+| `POST`   | `/api/sync`                 | 触发 Wiki 同步                 |
+| `GET`    | `/api/stats`                | 费用与使用统计                 |
+| `GET`    | `/api/metrics`              | Prometheus 监控指标            |
+| `POST`   | `/api/tts`                  | 文字转语音                     |
+| `GET`    | `/api/skills`               | 列出技能（本地 + Peer）        |
+| `GET`    | `/api/skills/search?q=`     | 全文搜索技能                   |
+| `GET`    | `/api/skills/:name`         | 获取技能详情                   |
+| `POST`   | `/api/skills`               | 发布技能                       |
+| `POST`   | `/api/skills/:name/install` | 安装技能到 Bot                 |
+| `DELETE` | `/api/skills/:name`         | 删除技能                       |
 
 </details>
 

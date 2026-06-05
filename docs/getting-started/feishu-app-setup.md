@@ -7,9 +7,9 @@ Step-by-step procedure to configure a Feishu bot for MetaBot.
 1. Go to **飞书开放平台开发者控制台**: [open.feishu.cn/app](https://open.feishu.cn/app)
 2. Click **"Create Custom App"**
 3. Fill in:
-    - **Name**: e.g. "Claude Code"
-    - **Description**: e.g. "Feishu to Claude Code bridge bot"
-    - **Icon**: Pick any icon and color
+   - **Name**: e.g. "Claude Code"
+   - **Description**: e.g. "Feishu to Claude Code bridge bot"
+   - **Icon**: Pick any icon and color
 4. Click **Create**
 
 ## Step 2: Record Credentials
@@ -29,10 +29,11 @@ Step-by-step procedure to configure a Feishu bot for MetaBot.
 1. Go to **Permissions & Scopes** (left sidebar under Development Configuration)
 2. Click **"Add permission scopes to app"** (blue button)
 3. In the popup dialog, search for and add these scopes:
-    - **`im:message`** — Read and send messages in private and group chats
-    - **`im:message:readonly`** — Read messages in private and group chats
-    - **`im:resource`** — Upload images and files (needed to send output files back to chat)
-    - **`im:chat:readonly`** — Read chat info (needed for 2-member group detection)
+   - **`im:message`** — Read and send messages in private and group chats
+   - **`im:message:readonly`** — Read messages in private and group chats
+   - **`im:message.group_msg`** — Get all messages in groups (needed for unmentioned group auto-response)
+   - **`im:resource`** — Upload images and files (needed to send output files back to chat)
+   - **`im:chat:readonly`** — Read chat info (needed for 2-member group detection)
 4. Click **"Add Scopes"**
 
 !!! note "Optional permissions for advanced features"
@@ -62,8 +63,8 @@ Step-by-step procedure to configure a Feishu bot for MetaBot.
 
 1. Click **"Create Version"** in the top banner (or go to Version Management & Release)
 2. Fill in:
-    - **App version**: e.g. "1.0.0"
-    - **Update Notes**: e.g. "Initial release"
+   - **App version**: e.g. "1.0.0"
+   - **Update Notes**: e.g. "Initial release"
 3. Default features should be "Bot" for both mobile and desktop
 4. Click **Save**, then **Publish** in the confirmation dialog
 5. If the org allows auto-approval for small apps, it goes live instantly

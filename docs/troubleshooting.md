@@ -57,17 +57,24 @@ If the service starts but Feishu events don't arrive:
 
 ## Bot Doesn't Reply in Group Chats
 
-The bot only responds when **@mentioned** in group chats. In DMs it replies to all messages. This is by design.
+By default, the bot only responds when **@mentioned** in group chats. In DMs it replies to all messages.
 
 Exception: **2-member groups** (1 user + 1 bot) are treated like DMs — no @mention required.
+
+If `"groupNoMention": true` is set in `bots.json` but unmentioned group messages still do not trigger replies, check the logs:
+
+- `Received message` or `Ignoring group message without @mention` means MetaBot received the event, so check local config.
+- No message log means Feishu did not deliver the unmentioned group message to the app.
+
+Feishu filters `im.message.receive_v1` deliveries by app permissions. To receive unmentioned group messages, grant **Get all messages in groups** in the developer console, usually `im:message.group_msg`, subscribe to **Receive messages v2.0** (`im.message.receive_v1`), then publish/reinstall the app.
 
 ## FAQ
 
 **No public IP needed?**
-:   Correct. Feishu uses WebSocket, Telegram uses long polling. No incoming ports needed.
+: Correct. Feishu uses WebSocket, Telegram uses long polling. No incoming ports needed.
 
 **Non-Claude models?**
-:   Yes. Any Anthropic-compatible API works (Kimi, DeepSeek, GLM, etc.). Set `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
+: Yes. Any Anthropic-compatible API works (Kimi, DeepSeek, GLM, etc.). Set `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
 
 **Agent communication?**
-:   Currently synchronous request-response via the Agent Bus. Agents talk to each other using `mb talk` or the `/api/talk` endpoint. Async bidirectional protocols are on the roadmap.
+: Currently synchronous request-response via the Agent Bus. Agents talk to each other using `mb talk` or the `/api/talk` endpoint. Async bidirectional protocols are on the roadmap.
