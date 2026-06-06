@@ -113,7 +113,7 @@ export async function handleTaskRoutes(
           asyncTaskStore.update(asyncTask.id, { status: 'running' });
           try {
             const result = await bot.bridge.executeApiTask({
-              prompt, chatId, userId: 'api', sendCards: sendCards ?? true,
+              prompt, chatId, userId: 'api', sendCards: sendCards ?? true, executionSource: 'api-async',
             });
             asyncTaskStore.update(asyncTask.id, {
               status: result.success ? 'completed' : 'failed',
@@ -147,6 +147,7 @@ export async function handleTaskRoutes(
                   userId: 'system',
                   sendCards: true,
                   maxTurns: 1,
+                  executionSource: 'api-async',
                 });
               }
             }
@@ -181,6 +182,7 @@ export async function handleTaskRoutes(
         chatId,
         userId: 'api',
         sendCards: sendCards ?? true,
+        executionSource: 'api-sync',
         ...(hasWsSubscribers ? {
           onUpdate: (state, bridgeMessageId, final) => {
             const msgType = final ? 'complete' : 'state';

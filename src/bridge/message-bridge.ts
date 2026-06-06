@@ -34,6 +34,10 @@ import {
   sendFinalResponseAttachment,
 } from './final-response-attachment.js';
 import { buildAppendedPromptCardState } from './appended-prompt-state.js';
+import {
+  getDefaultTaskExecutionQueue,
+  type TaskExecutionSource,
+} from '../utils/task-execution-queue.js';
 
 const TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const QUESTION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for user to answer
@@ -188,6 +192,10 @@ export interface ApiTaskOptions {
   groupMembers?: string[];
   /** Group ID — used for inter-bot communication chatId pattern. */
   groupId?: string;
+  /** Queue classification for shared process-wide task limits. */
+  executionSource?: TaskExecutionSource;
+  /** Counts against process-wide background manager-worker capacity. */
+  backgroundWorker?: boolean;
 }
 
 export interface ApiTaskResult {
@@ -225,6 +233,7 @@ export class MessageBridge {
   readonly costTracker: CostTracker;
   private sessionRegistry?: SessionRegistry;
   private runningTasks = new Map<string, RunningTask>(); // keyed by chatId
+  private secondaryRunningTasks = new Map<string, RunningTask[]>(); // extra API/background tasks per chat
   private messageQueues = new Map<string, IncomingMessage[]>(); // per-chatId message queue
   private pendingBatches = new Map<string, PendingBatch>(); // media debounce batches
   /**
@@ -403,10 +412,57 @@ export class MessageBridge {
 
   /** Return info about all currently running tasks (for team status display). */
   getRunningTasksInfo(): Array<{ chatId: string; startTime: number }> {
-    return Array.from(this.runningTasks.entries()).map(([chatId, task]) => ({
+    const primary = Array.from(this.runningTasks.entries()).map(([chatId, task]) => ({
       chatId,
       startTime: task.startTime,
     }));
+    const secondary = Array.from(this.secondaryRunningTasks.entries()).flatMap(([chatId, tasks]) => (
+      tasks.map((task) => ({ chatId, startTime: task.startTime }))
+    ));
+    return [...primary, ...secondary];
+  }
+
+  private registerRunningTask(chatId: string, task: RunningTask): void {
+    if (!this.runningTasks.has(chatId)) {
+      this.runningTasks.set(chatId, task);
+    } else {
+      const tasks = this.secondaryRunningTasks.get(chatId) ?? [];
+      tasks.push(task);
+      this.secondaryRunningTasks.set(chatId, tasks);
+    }
+    metrics.setGauge('metabot_active_tasks', this.activeTaskCount());
+  }
+
+  private unregisterRunningTask(chatId: string, task: RunningTask): void {
+    if (this.runningTasks.get(chatId) === task) {
+      this.promoteOrClearPrimaryTask(chatId);
+    } else {
+      this.removeSecondaryTask(chatId, task);
+    }
+    metrics.setGauge('metabot_active_tasks', this.activeTaskCount());
+  }
+
+  private promoteOrClearPrimaryTask(chatId: string): void {
+    const secondary = this.secondaryRunningTasks.get(chatId) ?? [];
+    const next = secondary.shift();
+    if (secondary.length === 0) this.secondaryRunningTasks.delete(chatId);
+    else this.secondaryRunningTasks.set(chatId, secondary);
+    if (next) this.runningTasks.set(chatId, next);
+    else this.runningTasks.delete(chatId);
+  }
+
+  private removeSecondaryTask(chatId: string, task: RunningTask): void {
+    const secondary = this.secondaryRunningTasks.get(chatId);
+    if (!secondary) return;
+    const remaining = secondary.filter((item) => item !== task);
+    if (remaining.length === 0) this.secondaryRunningTasks.delete(chatId);
+    else this.secondaryRunningTasks.set(chatId, remaining);
+  }
+
+  private activeTaskCount(): number {
+    let count = this.runningTasks.size;
+    for (const tasks of this.secondaryRunningTasks.values()) count += tasks.length;
+    return count;
   }
 
   /** Stop a running task for the given chatId. Returns true if a task was stopped. */
@@ -1849,8 +1905,7 @@ export class MessageBridge {
       rateLimiter,
       chatId,
     };
-    this.runningTasks.set(chatId, runningTask);
-    metrics.setGauge('metabot_active_tasks', this.runningTasks.size);
+    this.registerRunningTask(chatId, runningTask);
 
     this.audit.log({ event: 'task_start', botName: this.config.name, chatId, userId, prompt: text });
     this.emitActivity({ type: 'task_started', botName: this.config.name, chatId, userId, prompt: text?.slice(0, 200), timestamp: startTime });
@@ -2235,9 +2290,9 @@ export class MessageBridge {
       }
       try { executionHandle.finish(); } catch (e) { this.logger.warn({ err: e, chatId }, 'Error finishing execution handle'); }
       // Only delete if this is still our task (guards against stopTask race condition)
-      if (this.runningTasks.get(chatId) === runningTask) {
-        this.runningTasks.delete(chatId);
-        metrics.setGauge('metabot_active_tasks', this.runningTasks.size);
+      const wasPrimary = this.runningTasks.get(chatId) === runningTask;
+      this.unregisterRunningTask(chatId, runningTask);
+      if (wasPrimary && !this.runningTasks.has(chatId)) {
         this.processQueue(chatId);
       }
       if (imagePath) {
@@ -2254,11 +2309,18 @@ export class MessageBridge {
   }
 
   async executeApiTask(options: ApiTaskOptions): Promise<ApiTaskResult> {
-    const { prompt, chatId, userId = 'api', sendCards = false } = options;
+    const source = options.executionSource ?? inferExecutionSource(options.userId);
+    return getDefaultTaskExecutionQueue().enqueue({
+      botName: this.config.name,
+      chatId: options.chatId,
+      source,
+      backgroundWorker: options.backgroundWorker,
+      run: () => this.executeApiTaskDirect(options),
+    });
+  }
 
-    if (this.runningTasks.has(chatId)) {
-      return { success: false, responseText: '', error: 'Chat is busy with another task' };
-    }
+  private async executeApiTaskDirect(options: ApiTaskOptions): Promise<ApiTaskResult> {
+    const { prompt, chatId, userId = 'api', sendCards = false } = options;
 
     const { session, engineName } = this.prepareSessionForExecution(chatId);
     const cwd = session.workingDirectory;
@@ -2351,8 +2413,7 @@ export class MessageBridge {
       rateLimiter,
       chatId,
     };
-    this.runningTasks.set(chatId, runningTask);
-    metrics.setGauge('metabot_active_tasks', this.runningTasks.size);
+    this.registerRunningTask(chatId, runningTask);
 
     this.audit.log({ event: 'api_task_start', botName: this.config.name, chatId, userId, prompt });
     this.emitActivity({ type: 'task_started', botName: this.config.name, chatId, userId, prompt: prompt?.slice(0, 200), timestamp: startTime });
@@ -2640,9 +2701,11 @@ export class MessageBridge {
       clearTimeout(timeoutId);
       if (idleTimerId) clearTimeout(idleTimerId);
       try { executionHandle.finish(); } catch (e) { this.logger.warn({ err: e, chatId }, 'Error finishing execution handle'); }
-      this.runningTasks.delete(chatId);
-      metrics.setGauge('metabot_active_tasks', this.runningTasks.size);
-      this.processQueue(chatId);
+      const wasPrimary = this.runningTasks.get(chatId) === runningTask;
+      this.unregisterRunningTask(chatId, runningTask);
+      if (wasPrimary && !this.runningTasks.has(chatId)) {
+        this.processQueue(chatId);
+      }
       try { this.outputsManager.cleanup(outputsDir); } catch { /* ignore */ }
     }
   }
@@ -2790,6 +2853,7 @@ export class MessageBridge {
 
   private async finalizeRunningTaskForShutdown(_chatId: string, task: RunningTask): Promise<void> {
     await task.rateLimiter.cancelAndWait();
+    if (!task.cardMessageId) return;
     const current = task.processor.getCurrentState();
     await this.updateShutdownCard(task.cardMessageId, {
       ...current,
@@ -2834,6 +2898,16 @@ export class MessageBridge {
       this.logger.info({ chatId }, 'Aborted running task during shutdown');
     }
     this.runningTasks.clear();
+    for (const [chatId, tasks] of this.secondaryRunningTasks) {
+      for (const task of tasks) {
+        if (task.questionTimeoutId) clearTimeout(task.questionTimeoutId);
+        finalizers.push(this.finalizeRunningTaskForShutdown(chatId, task));
+        task.executionHandle.finish();
+        task.abortController.abort();
+        this.logger.info({ chatId }, 'Aborted secondary running task during shutdown');
+      }
+    }
+    this.secondaryRunningTasks.clear();
     // Abort any in-flight continuation cards too — their executors are
     // about to be torn down by shutdownAll below.
     for (const [chatId, cont] of this.continuationTasks) {
@@ -2868,6 +2942,13 @@ export function normalizePromptForEngine(text: string, engine: EngineName): stri
   const suffix = match[2] ?? '';
   if (suffix && !/^\s/.test(suffix)) return text;
   return `$${match[1]}${suffix}`;
+}
+
+function inferExecutionSource(userId: string | undefined): TaskExecutionSource {
+  if (userId === 'scheduler') return 'scheduler';
+  if (userId?.startsWith('manager:')) return 'manager-worker';
+  if (userId === 'api') return 'api-sync';
+  return 'api-sync';
 }
 
 export function isContextOverflowError(errorMessage?: string): boolean {

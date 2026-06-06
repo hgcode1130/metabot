@@ -4,6 +4,18 @@ import { ManagerStore, type ManagerStoreOptions, type ManagerTask, type ManagerT
 import type { TaskScheduler, ScheduledTask, RecurringTask, ScheduleMetadata } from '../scheduler/task-scheduler.js';
 import type { CardState } from '../types.js';
 import type { Logger } from '../utils/logger.js';
+import {
+  classifyRetryableTaskError,
+  maxRetriesFor,
+  retryDelayMs,
+  type RetryableTaskError,
+} from '../utils/retry-policy.js';
+import { getDefaultTaskExecutionQueue } from '../utils/task-execution-queue.js';
+import {
+  checkpointSummary,
+  ManagerCheckpointWriter,
+  type ManagerCheckpointPayload,
+} from './manager-checkpoint.js';
 import { buildWorkerTaskPrompt, normalizeWorkerTaskTemplate, WORKER_TASK_OUTPUT_CONTRACT_VERSION, type WorkerTaskTemplate } from './manager-worker-template.js';
 
 export interface ManagerScope {
@@ -98,6 +110,7 @@ export type ManagerReminder =
 
 export interface ManagerServiceOptions extends ManagerStoreOptions {
   store?: ManagerStore;
+  retryDelayMs?: (classification: RetryableTaskError, retryNumber: number) => number;
 }
 
 interface WorkerQueueEntry {
@@ -109,6 +122,11 @@ interface ManagerConcurrencyState {
   waiters: Array<() => void>;
 }
 
+interface RetrySchedulingInput {
+  task: ManagerTask;
+  error: unknown;
+}
+
 const DEFAULT_SESSION_KEY = 'default';
 const MAX_WAIT_TIMEOUT_SECONDS = 60;
 
@@ -118,6 +136,8 @@ export class ManagerService {
   private readonly ownsStore: boolean;
   private readonly workerQueues = new Map<string, WorkerQueueEntry>();
   private readonly managerConcurrency = new Map<string, ManagerConcurrencyState>();
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly retryDelay: (classification: RetryableTaskError, retryNumber: number) => number;
 
   constructor(
     private readonly registry: BotRegistry,
@@ -128,11 +148,9 @@ export class ManagerService {
     this.logger = logger.child({ module: 'manager-service' });
     this.store = options.store ?? new ManagerStore(logger, { dbPath: options.dbPath });
     this.ownsStore = !options.store;
+    this.retryDelay = options.retryDelayMs ?? ((classification, retryNumber) => retryDelayMs(classification, retryNumber));
 
-    const recovered = this.store.markInterruptedTasksFailed('Process recovered before manager task completed');
-    if (recovered > 0) {
-      this.logger.warn({ recovered }, 'Marked interrupted manager tasks as failed');
-    }
+    this.recoverInterruptedTasks();
   }
 
   listWorkers(scope: ManagerScope): ManagerWorkerInfo[] {
@@ -189,6 +207,7 @@ export class ManagerService {
         sessionKey: input.sessionKey ?? DEFAULT_SESSION_KEY,
         taskTemplate,
         outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION,
+        sendCards: input.sendCards ?? false,
         ...(input.relatedTaskId ? { relatedTaskId: input.relatedTaskId } : {}),
         ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       },
@@ -291,6 +310,31 @@ export class ManagerService {
     return true;
   }
 
+  resumeTask(scope: ManagerScope, taskId: string): ManagerTask {
+    this.requireManager(scope);
+    const task = this.store.getTask(taskId);
+    if (!task || !isTaskInScope(task, scope)) {
+      throw new Error(`Manager task not found: ${taskId}`);
+    }
+    if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'running') {
+      throw new Error(`Manager task cannot be resumed from status: ${task.status}`);
+    }
+    const metadata = {
+      ...(task.metadata ?? {}),
+      resumeRequestedAt: Date.now(),
+      retryResume: true,
+    };
+    const updated = this.store.updateTask(task.id, {
+      status: 'queued',
+      nextAttemptAt: Date.now(),
+      lastRetryReason: 'Manual resume requested',
+      metadata,
+    });
+    this.store.appendEvent(task.id, 'resume_queued', { reason: 'Manual resume requested' });
+    this.enqueueWorkerTask(task.id, task.workerChatId, sendCardsForTask({ ...task, metadata }));
+    return updated ?? task;
+  }
+
   scheduleReminder(scope: ManagerScope, input: ScheduleReminderInput): ManagerReminder {
     this.requireManager(scope);
     if (!input.prompt?.trim()) {
@@ -366,8 +410,24 @@ export class ManagerService {
   destroy(): void {
     this.workerQueues.clear();
     this.managerConcurrency.clear();
+    for (const timer of this.retryTimers.values()) clearTimeout(timer);
+    this.retryTimers.clear();
     if (this.ownsStore) {
       this.store.close();
+    }
+  }
+
+  private recoverInterruptedTasks(): void {
+    const reason = 'Process recovered before manager task completed';
+    const recovered = this.store.recoverInterruptedTasks(reason);
+    for (const task of recovered.requeued) {
+      this.enqueueWorkerTask(task.id, task.workerChatId, sendCardsForTask(task));
+    }
+    if (recovered.requeued.length > 0 || recovered.exhausted.length > 0) {
+      this.logger.warn(
+        { requeued: recovered.requeued.length, exhausted: recovered.exhausted.length },
+        'Recovered interrupted manager tasks',
+      );
     }
   }
 
@@ -418,11 +478,11 @@ export class ManagerService {
   private managerConcurrencyLimit(managerBotName: string): number | undefined {
     const manager = this.registry.get(managerBotName);
     const value = manager?.config.manager?.maxConcurrentWorkerTasks;
-    if (value === undefined) return undefined;
-    if (!Number.isInteger(value) || value <= 0) {
+    if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
       throw new Error(`manager.maxConcurrentWorkerTasks must be a positive integer for ${managerBotName}`);
     }
-    return value;
+    const backgroundLimit = getDefaultTaskExecutionQueue().snapshot().limits.maxBackgroundWorkerTasks;
+    return Math.min(value ?? backgroundLimit, backgroundLimit);
   }
 
   private validateManagerConcurrency(manager: RegisteredBot): void {
@@ -519,29 +579,35 @@ export class ManagerService {
     const startedAt = Date.now();
     const running = this.store.updateTask(task.id, { status: 'running', startedAt });
     if (!running) return;
-    this.store.appendEvent(task.id, 'started', { workerBotName: task.workerBotName, workerChatId: task.workerChatId });
+    const attempt = executionAttemptNumber(task);
+    this.store.appendEvent(task.id, 'started', { workerBotName: task.workerBotName, workerChatId: task.workerChatId, attempt });
+    if (task.attemptCount > 0) {
+      this.store.appendEvent(task.id, 'retry_started', { attempt, reason: task.lastRetryReason });
+    }
+    if (shouldIncludeResumeInstructions(task)) {
+      this.store.appendEvent(task.id, 'resumed', { attempt });
+    }
+
+    const checkpoint = new ManagerCheckpointWriter(
+      (payload) => this.appendCheckpoint(task.id, payload),
+      { attempt, workerChatId: task.workerChatId },
+    );
 
     try {
       const result = await worker.bridge.executeApiTask({
-        prompt: buildWorkerTaskPrompt({
-          prompt: task.prompt,
-          taskTemplate: task.metadata?.taskTemplate,
-          taskId: task.id,
-          traceId: task.traceId,
-          managerBotName: task.managerBotName,
-          workerBotName: task.workerBotName,
-          label: task.label,
-          relatedTaskId: task.metadata?.relatedTaskId,
-          workflowId: task.metadata?.workflowId,
-        }),
+        prompt: this.buildExecutionPrompt(task),
         chatId: task.workerChatId,
         userId: `manager:${task.managerBotName}`,
         sendCards,
+        executionSource: 'manager-worker',
+        backgroundWorker: true,
         onRawMessage: (message) => {
           this.store.appendEvent(task.id, 'worker_message', { message });
+          checkpoint.fromRaw(message);
         },
         onUpdate: (state: CardState, messageId: string, final: boolean) => {
           this.store.appendEvent(task.id, 'worker_update', workerUpdatePayload(state, messageId, final));
+          checkpoint.fromUpdate(state, final);
         },
       });
 
@@ -550,6 +616,7 @@ export class ManagerService {
       const completedAt = Date.now();
       const durationMs = result.durationMs ?? completedAt - startedAt;
       if (result.success) {
+        checkpoint.final({ status: 'complete', responseText: result.responseText, costUsd: result.costUsd, durationMs });
         this.store.updateTask(task.id, {
           status: 'completed',
           completedAt,
@@ -560,22 +627,118 @@ export class ManagerService {
         this.store.appendEvent(task.id, 'completed', { durationMs, costUsd: result.costUsd });
         await this.notifyManager(task.id);
       } else {
+        const error = result.error ?? 'Worker task failed';
+        checkpoint.final({ status: 'error', responseText: result.responseText, costUsd: result.costUsd, durationMs }, error);
+        if (this.scheduleRetryIfNeeded({ task, error })) return;
         this.store.updateTask(task.id, {
           status: 'failed',
           completedAt,
           costUsd: result.costUsd,
           durationMs,
           resultText: result.responseText,
-          error: result.error ?? 'Worker task failed',
+          error,
         });
-        this.store.appendEvent(task.id, 'failed', { durationMs, error: result.error ?? 'Worker task failed' });
+        this.store.appendEvent(task.id, 'failed', { durationMs, error });
         await this.notifyManager(task.id);
       }
     } catch (err: any) {
       if (this.store.getTask(task.id)?.status === 'cancelled') return;
-      this.failTask(task, err?.message ?? 'Worker task failed');
+      const error = err?.message ?? 'Worker task failed';
+      checkpoint.final(undefined, error);
+      if (this.scheduleRetryIfNeeded({ task, error })) return;
+      this.failTask(task, error);
       await this.notifyManager(task.id);
     }
+  }
+
+  private buildExecutionPrompt(task: ManagerTask): string {
+    const basePrompt = buildWorkerTaskPrompt({
+      prompt: task.prompt,
+      taskTemplate: task.metadata?.taskTemplate,
+      taskId: task.id,
+      traceId: task.traceId,
+      managerBotName: task.managerBotName,
+      workerBotName: task.workerBotName,
+      label: task.label,
+      relatedTaskId: task.metadata?.relatedTaskId,
+      workflowId: task.metadata?.workflowId,
+    });
+    if (!shouldIncludeResumeInstructions(task)) return basePrompt;
+    return `${basePrompt}\n\n${this.resumeInstructions(task)}`;
+  }
+
+  private resumeInstructions(task: ManagerTask): string {
+    const checkpoint = this.latestCheckpointSummary(task.id);
+    return [
+      'Resume instructions:',
+      'Continue this delegated task from the latest checkpoint without duplicating completed work.',
+      'If an external side effect may already have happened, verify before repeating it.',
+      `Latest checkpoint: ${checkpoint}`,
+    ].join('\n');
+  }
+
+  private latestCheckpointSummary(taskId: string): string {
+    const checkpoint = this.store.listEvents(taskId)
+      .filter((event) => event.type === 'checkpoint')
+      .at(-1);
+    return checkpointSummary(checkpoint?.payload);
+  }
+
+  private appendCheckpoint(taskId: string, payload: ManagerCheckpointPayload): void {
+    this.store.appendEvent(taskId, 'checkpoint', payload as unknown as Record<string, unknown>);
+    this.store.updateTask(taskId, { lastCheckpointAt: Date.now() });
+  }
+
+  private scheduleRetryIfNeeded(input: RetrySchedulingInput): boolean {
+    const task = this.store.getTask(input.task.id) ?? input.task;
+    const classification = classifyRetryableTaskError(input.error);
+    if (!classification.retryable) return false;
+    if (task.attemptCount >= Math.min(task.maxAttempts, maxRetriesFor(classification))) {
+      this.markRetryExhausted(task, classification.reason);
+      return false;
+    }
+    this.scheduleRetry(task, classification);
+    return true;
+  }
+
+  private markRetryExhausted(task: ManagerTask, reason: string): void {
+    this.store.appendEvent(task.id, 'retry_exhausted', {
+      attemptCount: task.attemptCount,
+      maxAttempts: task.maxAttempts,
+      reason,
+    });
+  }
+
+  private scheduleRetry(task: ManagerTask, classification: RetryableTaskError): void {
+    const retryNumber = task.attemptCount + 1;
+    const delayMs = this.retryDelay(classification, retryNumber);
+    const nextAttemptAt = Date.now() + delayMs;
+    const metadata = { ...(task.metadata ?? {}), retryResume: true };
+    this.store.updateTask(task.id, {
+      status: 'queued',
+      attemptCount: retryNumber,
+      nextAttemptAt,
+      lastRetryReason: classification.reason,
+      metadata,
+    });
+    this.store.appendEvent(task.id, 'retry_scheduled', {
+      kind: classification.kind,
+      reason: classification.reason,
+      retryNumber,
+      delayMs,
+      nextAttemptAt,
+    });
+    this.scheduleRetryTimer(task.id, task.workerChatId, sendCardsForTask({ ...task, metadata }), delayMs);
+  }
+
+  private scheduleRetryTimer(taskId: string, workerChatId: string, sendCards: boolean, delayMs: number): void {
+    const existing = this.retryTimers.get(taskId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(taskId);
+      this.enqueueWorkerTask(taskId, workerChatId, sendCards);
+    }, delayMs);
+    this.retryTimers.set(taskId, timer);
   }
 
   private failTask(task: ManagerTask, error: string): void {
@@ -656,6 +819,18 @@ function isTaskInScope(task: ManagerTask, scope: ManagerScope): boolean {
 
 function isTerminalStatus(status: ManagerTaskStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function executionAttemptNumber(task: ManagerTask): number {
+  return task.attemptCount + 1;
+}
+
+function sendCardsForTask(task: Pick<ManagerTask, 'metadata'>): boolean {
+  return task.metadata?.sendCards === true;
+}
+
+function shouldIncludeResumeInstructions(task: ManagerTask): boolean {
+  return task.metadata?.retryResume === true || typeof task.metadata?.resumeRequestedAt === 'number';
 }
 
 function managerScopeKey(task: Pick<ManagerTask, 'managerBotName' | 'managerChatId'>): string {

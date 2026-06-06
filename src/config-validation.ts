@@ -94,12 +94,19 @@ const peerSchema = z.object({
   secret: z.string().optional(),
 }).passthrough();
 
+const taskExecutionSchema = z.object({
+  maxConcurrentTasks: z.number().int().positive().optional(),
+  maxConcurrentTasksPerChat: z.number().int().positive().optional(),
+  maxBackgroundWorkerTasks: z.number().int().positive().optional(),
+}).passthrough();
+
 const botsObjectSchema = z.object({
   feishuBots: z.array(feishuBotSchema).optional(),
   telegramBots: z.array(telegramBotSchema).optional(),
   webBots: z.array(webBotSchema).optional(),
   wechatBots: z.array(wechatBotSchema).optional(),
   peers: z.array(peerSchema).optional(),
+  taskExecution: taskExecutionSchema.optional(),
 }).passthrough();
 
 const botsArraySchema = z.array(feishuBotSchema);

@@ -1,4 +1,9 @@
 {
+  "taskExecution": {
+    "maxConcurrentTasks": 10,
+    "maxConcurrentTasksPerChat": 2,
+    "maxBackgroundWorkerTasks": 4
+  },
   "feishuBots": [
     {
       "name": "research-manager",

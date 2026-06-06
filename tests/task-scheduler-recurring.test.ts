@@ -33,10 +33,10 @@ function createMockLogger(): Logger {
   } as unknown as Logger;
 }
 
-function createMockRegistry(botExists = true, isBusy = false): BotRegistry {
+function createMockRegistry(botExists = true, isBusy = false, executeApiTask?: ReturnType<typeof vi.fn>): BotRegistry {
   const mockBridge = {
     isBusy: vi.fn().mockReturnValue(isBusy),
-    executeApiTask: vi.fn().mockResolvedValue({ success: true }),
+    executeApiTask: executeApiTask ?? vi.fn().mockResolvedValue({ success: true }),
   };
   const mockSender = {
     sendTextNotice: vi.fn().mockResolvedValue(undefined),
@@ -351,6 +351,31 @@ describe('TaskScheduler - Recurring Tasks', () => {
     expect(scheduler.listRecurringTasks()).toHaveLength(1);
     expect(scheduler.listRecurringTasks()[0].id).toBe(recurring.id);
 
+    scheduler.destroy();
+  });
+
+  it('retries transient scheduled task failures before final status', async () => {
+    const executeApiTask = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'API Error: 429 rate_limit_error' })
+      .mockResolvedValueOnce({ success: true });
+    const scheduler = new TaskScheduler(createMockRegistry(true, false, executeApiTask), createMockLogger());
+    const task = scheduler.scheduleTask({
+      botName: 'testbot',
+      chatId: 'chat1',
+      prompt: 'Do work',
+      delaySeconds: 0,
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(scheduler.listTasks()[0]).toMatchObject({
+      id: task.id,
+      status: 'pending',
+      retryCount: 1,
+    });
+    await vi.advanceTimersByTimeAsync(600_000);
+
+    expect(executeApiTask).toHaveBeenCalledTimes(2);
+    expect(scheduler.listTasks()).toHaveLength(0);
     scheduler.destroy();
   });
 });

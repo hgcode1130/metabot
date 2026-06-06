@@ -40,6 +40,11 @@ describe('validateBotsConfig', () => {
 
   it('accepts the current object format with manager and persistent executor settings', () => {
     expect(() => validateBotsConfig({
+      taskExecution: {
+        maxConcurrentTasks: 10,
+        maxConcurrentTasksPerChat: 2,
+        maxBackgroundWorkerTasks: 4,
+      },
       feishuBots: [{
         ...minimalFeishuBot(),
         manager: {
@@ -56,6 +61,13 @@ describe('validateBotsConfig', () => {
       webBots: [minimalWebBot('worker-code')],
       peers: [{ name: 'peer-a', url: 'http://localhost:9100' }],
     }, 'bots.json')).not.toThrow();
+  });
+
+  it('rejects invalid task execution limits', () => {
+    expect(() => validateBotsConfig({
+      taskExecution: { maxConcurrentTasks: 0 },
+      feishuBots: [minimalFeishuBot()],
+    }, 'bots.json')).toThrow(/maxConcurrentTasks/);
   });
 
   it('rejects invalid manager concurrency values', () => {
@@ -99,6 +111,25 @@ describe('validateBotsConfig', () => {
     } finally {
       if (priorBotsConfig === undefined) delete process.env.BOTS_CONFIG;
       else process.env.BOTS_CONFIG = priorBotsConfig;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads task execution defaults and env overrides', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'metabot-task-execution-'));
+    const configPath = join(dir, 'bots.json');
+    try {
+      writeFileSync(configPath, JSON.stringify({ webBots: [minimalWebBot('worker-code')] }));
+      process.env.BOTS_CONFIG = configPath;
+      process.env.METABOT_MAX_CONCURRENT_TASKS = '9';
+      process.env.METABOT_MAX_CONCURRENT_TASKS_PER_CHAT = '2';
+      process.env.METABOT_MAX_BACKGROUND_WORKER_TASKS = '3';
+      expect(loadAppConfig().taskExecution).toEqual({
+        maxConcurrentTasks: 9,
+        maxConcurrentTasksPerChat: 2,
+        maxBackgroundWorkerTasks: 3,
+      });
+    } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });

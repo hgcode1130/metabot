@@ -38,6 +38,11 @@ function service() {
       createdAt: 1, updatedAt: 2, events: [{ id: 'evt-1', taskId: 'mgrtask-1', type: 'completed', createdAt: 2 }],
     })),
     cancelTask: vi.fn(() => true),
+    resumeTask: vi.fn(() => ({
+      id: 'mgrtask-1', traceId: 'trace-1', managerBotName: 'manager', managerChatId: 'chat-a',
+      workerBotName: 'worker-a', workerChatId: 'manager-worker-abc', prompt: 'do it', status: 'queued',
+      createdAt: 1, updatedAt: 3,
+    })),
     scheduleReminder: vi.fn(() => ({ id: 'sched-1', type: 'one-time', botName: 'manager', chatId: 'chat-a', prompt: 'remember', executeAt: 1, sendCards: true, status: 'pending', createdAt: 1 })),
     listReminders: vi.fn(() => []),
     cancelReminder: vi.fn(() => true),
@@ -83,6 +88,18 @@ describe('manager routes', () => {
     expect(out.statusCode).toBe(200);
     expect(out.body.task.id).toBe('mgrtask-1');
     expect(out.body.events[0].type).toBe('completed');
+  });
+
+  it('resumes manager tasks', async () => {
+    const svc = service();
+    const out = res();
+    await handleManagerRoutes(ctx(svc), req({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+    }), out, 'POST', '/api/manager/tasks/mgrtask-1/resume');
+    expect(out.statusCode).toBe(200);
+    expect(out.body.task.status).toBe('queued');
+    expect(svc.resumeTask).toHaveBeenCalledWith({ managerBotName: 'manager', managerChatId: 'chat-a' }, 'mgrtask-1');
   });
 
   it('schedules and cancels reminders', async () => {

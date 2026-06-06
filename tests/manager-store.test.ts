@@ -213,4 +213,28 @@ describe('ManagerStore', () => {
     expect(managerStore.listEvents(queued.id).map((event) => event.type)).toContain('process_recovered');
     expect(managerStore.listEvents(running.id).map((event) => event.type)).toContain('failed');
   });
+
+  it('recovers interrupted tasks by requeueing when attempts remain', () => {
+    const managerStore = createStore();
+    const task = managerStore.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker',
+      workerChatId: 'chat-worker',
+      prompt: 'recover',
+    });
+    managerStore.updateTask(task.id, { status: 'running', startedAt: Date.now() });
+
+    const recovered = managerStore.recoverInterruptedTasks('restart');
+
+    expect(recovered.requeued.map((item) => item.id)).toContain(task.id);
+    expect(managerStore.getTask(task.id)).toMatchObject({
+      status: 'queued',
+      lastRetryReason: 'restart',
+    });
+    expect(managerStore.listEvents(task.id).map((event) => event.type)).toEqual(expect.arrayContaining([
+      'process_recovered',
+      'resume_queued',
+    ]));
+  });
 });

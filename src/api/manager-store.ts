@@ -16,6 +16,12 @@ export type ManagerTaskEventType =
   | 'prompt_sent'
   | 'completed'
   | 'failed'
+  | 'checkpoint'
+  | 'retry_scheduled'
+  | 'retry_started'
+  | 'retry_exhausted'
+  | 'resume_queued'
+  | 'resumed'
   | 'cancel_requested'
   | 'cancelled'
   | 'process_recovered'
@@ -41,6 +47,11 @@ export interface ManagerTask {
   durationMs?: number;
   resultText?: string;
   error?: string;
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt?: number;
+  lastCheckpointAt?: number;
+  lastRetryReason?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -73,7 +84,19 @@ export interface ManagerTaskListFilter {
 
 export type ManagerTaskPatch = Partial<Pick<
   ManagerTask,
-  'status' | 'startedAt' | 'completedAt' | 'costUsd' | 'durationMs' | 'resultText' | 'error' | 'metadata'
+  | 'status'
+  | 'startedAt'
+  | 'completedAt'
+  | 'costUsd'
+  | 'durationMs'
+  | 'resultText'
+  | 'error'
+  | 'attemptCount'
+  | 'maxAttempts'
+  | 'nextAttemptAt'
+  | 'lastCheckpointAt'
+  | 'lastRetryReason'
+  | 'metadata'
 >>;
 
 type TaskRow = {
@@ -94,6 +117,11 @@ type TaskRow = {
   duration_ms: number | null;
   result_text: string | null;
   error: string | null;
+  attempt_count?: number | null;
+  max_attempts?: number | null;
+  next_attempt_at?: number | null;
+  last_checkpoint_at?: number | null;
+  last_retry_reason?: string | null;
   metadata_json: string | null;
 };
 
@@ -137,6 +165,8 @@ export class ManagerStore {
       status: 'queued',
       createdAt: now,
       updatedAt: now,
+      attemptCount: 0,
+      maxAttempts: 5,
       metadata: input.metadata,
     };
 
@@ -144,8 +174,8 @@ export class ManagerStore {
       this.db.prepare(`
         INSERT INTO manager_tasks (
           id, trace_id, manager_bot_name, manager_chat_id, worker_bot_name, worker_chat_id,
-          label, prompt, status, created_at, updated_at, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          label, prompt, status, created_at, updated_at, attempt_count, max_attempts, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         task.id,
         task.traceId,
@@ -158,6 +188,8 @@ export class ManagerStore {
         task.status,
         task.createdAt,
         task.updatedAt,
+        task.attemptCount,
+        task.maxAttempts,
         task.metadata ? JSON.stringify(task.metadata) : null,
       );
       this.insertEvent(task.id, 'created', { traceId: task.traceId });
@@ -235,6 +267,26 @@ export class ManagerStore {
       updates.push('error = ?');
       params.push(patch.error);
     }
+    if (patch.attemptCount !== undefined) {
+      updates.push('attempt_count = ?');
+      params.push(patch.attemptCount);
+    }
+    if (patch.maxAttempts !== undefined) {
+      updates.push('max_attempts = ?');
+      params.push(patch.maxAttempts);
+    }
+    if (patch.nextAttemptAt !== undefined) {
+      updates.push('next_attempt_at = ?');
+      params.push(patch.nextAttemptAt);
+    }
+    if (patch.lastCheckpointAt !== undefined) {
+      updates.push('last_checkpoint_at = ?');
+      params.push(patch.lastCheckpointAt);
+    }
+    if (patch.lastRetryReason !== undefined) {
+      updates.push('last_retry_reason = ?');
+      params.push(patch.lastRetryReason);
+    }
     if (patch.metadata !== undefined) {
       updates.push('metadata_json = ?');
       params.push(JSON.stringify(patch.metadata));
@@ -277,6 +329,27 @@ export class ManagerStore {
     return tasks.length;
   }
 
+  recoverInterruptedTasks(reason: string): { requeued: ManagerTask[]; exhausted: ManagerTask[] } {
+    const tasks = this.listInterruptedTasks();
+    if (tasks.length === 0) return { requeued: [], exhausted: [] };
+
+    const requeued: ManagerTask[] = [];
+    const exhausted: ManagerTask[] = [];
+    const recover = this.db.transaction(() => {
+      for (const task of tasks) {
+        if (task.attemptCount >= task.maxAttempts) {
+          this.markTaskRetryExhausted(task, reason);
+          exhausted.push(this.getTask(task.id) ?? task);
+        } else {
+          this.requeueRecoveredTask(task, reason);
+          requeued.push(this.getTask(task.id) ?? task);
+        }
+      }
+    });
+    recover();
+    return { requeued, exhausted };
+  }
+
   close(): void {
     this.db.close();
   }
@@ -301,6 +374,11 @@ export class ManagerStore {
         duration_ms INTEGER,
         result_text TEXT,
         error TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        next_attempt_at INTEGER,
+        last_checkpoint_at INTEGER,
+        last_retry_reason TEXT,
         metadata_json TEXT
       );
 
@@ -322,6 +400,54 @@ export class ManagerStore {
       CREATE INDEX IF NOT EXISTS idx_manager_events_task
         ON manager_task_events(task_id, created_at ASC);
     `);
+    this.addMissingTaskColumns();
+  }
+
+  private addMissingTaskColumns(): void {
+    const columns = new Set(
+      this.tableColumns('manager_tasks'),
+    );
+    const specs = [
+      ['attempt_count', 'INTEGER NOT NULL DEFAULT 0'],
+      ['max_attempts', 'INTEGER NOT NULL DEFAULT 5'],
+      ['next_attempt_at', 'INTEGER'],
+      ['last_checkpoint_at', 'INTEGER'],
+      ['last_retry_reason', 'TEXT'],
+    ];
+    for (const [name, spec] of specs) {
+      if (!columns.has(name)) this.db.exec(`ALTER TABLE manager_tasks ADD COLUMN ${name} ${spec}`);
+    }
+  }
+
+  private tableColumns(table: string): string[] {
+    const result = this.db.pragma(`table_info(${table})`) as unknown;
+    if (!Array.isArray(result)) return [];
+    return result
+      .map((row) => (row as { name?: unknown }).name)
+      .filter((name): name is string => typeof name === 'string');
+  }
+
+  private markTaskRetryExhausted(task: ManagerTask, reason: string): void {
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE manager_tasks
+      SET status = 'failed', updated_at = ?, completed_at = ?, error = ?, last_retry_reason = ?
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(now, now, reason, reason, task.id);
+    this.insertEvent(task.id, 'process_recovered', { reason });
+    this.insertEvent(task.id, 'retry_exhausted', { reason });
+    this.insertEvent(task.id, 'failed', { reason });
+  }
+
+  private requeueRecoveredTask(task: ManagerTask, reason: string): void {
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE manager_tasks
+      SET status = 'queued', updated_at = ?, next_attempt_at = ?, last_retry_reason = ?
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(now, now, reason, task.id);
+    this.insertEvent(task.id, 'process_recovered', { reason });
+    this.insertEvent(task.id, 'resume_queued', { reason });
   }
 
   private listInterruptedTasks(): ManagerTask[] {
@@ -371,6 +497,11 @@ export class ManagerStore {
       durationMs: row.duration_ms ?? undefined,
       resultText: row.result_text ?? undefined,
       error: row.error ?? undefined,
+      attemptCount: row.attempt_count ?? 0,
+      maxAttempts: row.max_attempts ?? 5,
+      nextAttemptAt: row.next_attempt_at ?? undefined,
+      lastCheckpointAt: row.last_checkpoint_at ?? undefined,
+      lastRetryReason: row.last_retry_reason ?? undefined,
       metadata: parseJsonObject(row.metadata_json),
     };
   }

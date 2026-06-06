@@ -13,6 +13,7 @@ export const MANAGER_MCP_ALLOWED_TOOLS = [
   `mcp__${MANAGER_MCP_SERVER_NAME}__get_worker_task`,
   `mcp__${MANAGER_MCP_SERVER_NAME}__list_worker_tasks`,
   `mcp__${MANAGER_MCP_SERVER_NAME}__cancel_worker_task`,
+  `mcp__${MANAGER_MCP_SERVER_NAME}__resume_worker_task`,
   `mcp__${MANAGER_MCP_SERVER_NAME}__schedule_reminder`,
   `mcp__${MANAGER_MCP_SERVER_NAME}__list_reminders`,
   `mcp__${MANAGER_MCP_SERVER_NAME}__cancel_reminder`,
@@ -117,6 +118,16 @@ export function buildManagerMcpServer(options: ManagerMcpOptions): McpSdkServerC
         },
         async (args) => safeTool(logger, 'cancel_worker_task', () => ({
           cancelled: service.cancelTask(scope, args.taskId, args.reason),
+        })),
+      ),
+      tool(
+        'resume_worker_task',
+        'Resume a failed or queued delegated worker task using its latest checkpoint summary.',
+        {
+          taskId: z.string().min(1),
+        },
+        async (args) => safeTool(logger, 'resume_worker_task', () => ({
+          task: service.resumeTask(scope, args.taskId),
         })),
       ),
       tool(

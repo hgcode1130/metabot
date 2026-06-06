@@ -3,6 +3,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { validateBotsConfig } from './config-validation.js';
+import {
+  DEFAULT_TASK_EXECUTION_LIMITS,
+  type TaskExecutionLimits,
+} from './utils/task-execution-queue.js';
 
 /** Agent engine backing a bot. */
 export type EngineName = 'claude' | 'kimi' | 'codex';
@@ -147,6 +151,8 @@ export interface AppConfig {
   };
   /** Peer MetaBot instances for cross-instance bot discovery and task delegation. */
   peers: PeerConfig[];
+  /** Process-wide task execution limits for API, scheduler, and manager-worker tasks. */
+  taskExecution: TaskExecutionLimits;
 }
 
 function required(name: string): string {
@@ -476,6 +482,37 @@ export interface BotsJsonNewFormat {
   webBots?: WebBotJsonEntry[];
   wechatBots?: WechatBotJsonEntry[];
   peers?: PeerJsonEntry[];
+  taskExecution?: Partial<TaskExecutionLimits>;
+}
+
+function taskExecutionFromConfig(config: unknown): TaskExecutionLimits {
+  const parsed = config && typeof config === 'object' && !Array.isArray(config)
+    ? (config as BotsJsonNewFormat).taskExecution
+    : undefined;
+  return {
+    maxConcurrentTasks: positiveIntEnv(
+      'METABOT_MAX_CONCURRENT_TASKS',
+      parsed?.maxConcurrentTasks ?? DEFAULT_TASK_EXECUTION_LIMITS.maxConcurrentTasks,
+    ),
+    maxConcurrentTasksPerChat: positiveIntEnv(
+      'METABOT_MAX_CONCURRENT_TASKS_PER_CHAT',
+      parsed?.maxConcurrentTasksPerChat ?? DEFAULT_TASK_EXECUTION_LIMITS.maxConcurrentTasksPerChat,
+    ),
+    maxBackgroundWorkerTasks: positiveIntEnv(
+      'METABOT_MAX_BACKGROUND_WORKER_TASKS',
+      parsed?.maxBackgroundWorkerTasks ?? DEFAULT_TASK_EXECUTION_LIMITS.maxBackgroundWorkerTasks,
+    ),
+  };
+}
+
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
 }
 
 export function loadAppConfig(): AppConfig {
@@ -615,5 +652,6 @@ export function loadAppConfig(): AppConfig {
       readerToken: memoryReaderToken,
     },
     peers,
+    taskExecution: taskExecutionFromConfig(parsedConfig),
   };
 }

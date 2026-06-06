@@ -393,6 +393,20 @@ Example manager config:
 
 A manager-enabled Claude bot receives `metabot-manager` tools for async worker dispatch, status lookup, cancellation, and persistent reminders. Delegated tasks run in generated worker sessions, are hidden from Feishu by default, and are persisted with task IDs, trace IDs, event timelines, cost, duration, result, and error fields. Use `/api/manager/tasks?...` or the manager tools to audit what happened.
 
+Process-wide execution limits can live at the top level of `bots.json` or in `.env`:
+
+```json
+{
+  "taskExecution": {
+    "maxConcurrentTasks": 10,
+    "maxConcurrentTasksPerChat": 2,
+    "maxBackgroundWorkerTasks": 4
+  }
+}
+```
+
+`manager.maxConcurrentWorkerTasks` still applies; the effective worker concurrency is the smaller of that value and `maxBackgroundWorkerTasks`. Transient 429/503/529 errors, malformed empty HTTP 200 gateway responses, and legacy chat-busy races are requeued with backoff. Manager workers write compact checkpoints and can be resumed.
+
 </details>
 
 <details>
@@ -402,6 +416,9 @@ A manager-enabled Claude bot receives `metabot-manager` tools for async worker d
 | --------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------- |
 | `API_PORT`                  | 9100                    | HTTP API port                                                                                             |
 | `API_SECRET`                | —                       | Bearer token auth (protects API + Web UI). Generate one with `openssl rand -hex 32`                       |
+| `METABOT_MAX_CONCURRENT_TASKS` | 10                   | Process-wide active task limit                                                                            |
+| `METABOT_MAX_CONCURRENT_TASKS_PER_CHAT` | 2          | Active task limit per bot+chat                                                                            |
+| `METABOT_MAX_BACKGROUND_WORKER_TASKS` | 4             | Active manager/background worker task limit                                                               |
 | `MEMORY_ENABLED`            | true                    | Enable MetaMemory                                                                                         |
 | `MEMORY_PORT`               | 8100                    | MetaMemory port                                                                                           |
 | `MEMORY_ADMIN_TOKEN`        | —                       | Admin token (full access)                                                                                 |

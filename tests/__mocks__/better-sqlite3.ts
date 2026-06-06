@@ -39,7 +39,23 @@ export default class FakeDatabase {
 
   private run(sql: string, params: any[]) {
     if (sql.startsWith('INSERT INTO manager_tasks')) {
-      const [id, traceId, managerBotName, managerChatId, workerBotName, workerChatId, label, prompt, status, createdAt, updatedAt, metadataJson] = params;
+      const [
+        id,
+        traceId,
+        managerBotName,
+        managerChatId,
+        workerBotName,
+        workerChatId,
+        label,
+        prompt,
+        status,
+        createdAt,
+        updatedAt,
+        attemptCountOrMetadata,
+        maxAttempts,
+        maybeMetadataJson,
+      ] = params;
+      const hasRetryColumns = params.length >= 14;
       this.state.tasks.push({
         id,
         trace_id: traceId,
@@ -52,13 +68,18 @@ export default class FakeDatabase {
         status,
         created_at: createdAt,
         updated_at: updatedAt,
+        attempt_count: hasRetryColumns ? attemptCountOrMetadata : 0,
+        max_attempts: hasRetryColumns ? maxAttempts : 5,
+        next_attempt_at: null,
+        last_checkpoint_at: null,
+        last_retry_reason: null,
         started_at: null,
         completed_at: null,
         cost_usd: null,
         duration_ms: null,
         result_text: null,
         error: null,
-        metadata_json: metadataJson,
+        metadata_json: hasRetryColumns ? maybeMetadataJson : attemptCountOrMetadata,
       });
       return { changes: 1 };
     }
@@ -70,10 +91,30 @@ export default class FakeDatabase {
     }
 
     if (sql.includes("SET status = 'failed'")) {
-      const [updatedAt, completedAt, error, id] = params;
+      const [updatedAt, completedAt, error, retryReasonOrId, maybeId] = params;
+      const id = maybeId ?? retryReasonOrId;
       const row = this.state.tasks.find((task) => task.id === id && ['queued', 'running'].includes(task.status));
       if (!row) return { changes: 0 };
-      Object.assign(row, { status: 'failed', updated_at: updatedAt, completed_at: completedAt, error });
+      Object.assign(row, {
+        status: 'failed',
+        updated_at: updatedAt,
+        completed_at: completedAt,
+        error,
+        ...(maybeId ? { last_retry_reason: retryReasonOrId } : {}),
+      });
+      return { changes: 1 };
+    }
+
+    if (sql.includes("SET status = 'queued'")) {
+      const [updatedAt, nextAttemptAt, retryReason, id] = params;
+      const row = this.state.tasks.find((task) => task.id === id && ['queued', 'running'].includes(task.status));
+      if (!row) return { changes: 0 };
+      Object.assign(row, {
+        status: 'queued',
+        updated_at: updatedAt,
+        next_attempt_at: nextAttemptAt,
+        last_retry_reason: retryReason,
+      });
       return { changes: 1 };
     }
 
@@ -90,6 +131,11 @@ export default class FakeDatabase {
       if (sql.includes('duration_ms = ?')) row.duration_ms = params[i++];
       if (sql.includes('result_text = ?')) row.result_text = params[i++];
       if (sql.includes('error = ?')) row.error = params[i++];
+      if (sql.includes('attempt_count = ?')) row.attempt_count = params[i++];
+      if (sql.includes('max_attempts = ?')) row.max_attempts = params[i++];
+      if (sql.includes('next_attempt_at = ?')) row.next_attempt_at = params[i++];
+      if (sql.includes('last_checkpoint_at = ?')) row.last_checkpoint_at = params[i++];
+      if (sql.includes('last_retry_reason = ?')) row.last_retry_reason = params[i++];
       if (sql.includes('metadata_json = ?')) row.metadata_json = params[i];
       return { changes: 1 };
     }

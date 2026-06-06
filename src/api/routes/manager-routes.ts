@@ -102,6 +102,16 @@ export async function handleManagerRoutes(
       return true;
     }
 
+    const resumeTaskMatch = path.match(/^\/api\/manager\/tasks\/([^/]+)\/resume$/);
+    if (method === 'POST' && resumeTaskMatch) {
+      const body = await parseJsonBody(req);
+      const scope = scopeFromBody(body);
+      const taskId = decodeURIComponent(resumeTaskMatch[1]);
+      const task = service.resumeTask(scope, taskId);
+      jsonResponse(res, 200, { task: taskDto(task) });
+      return true;
+    }
+
     if (method === 'POST' && path === '/api/manager/reminders') {
       const body = await parseJsonBody(req);
       const scope = scopeFromBody(body);
@@ -237,6 +247,11 @@ function taskDto(task: ManagerTask) {
     durationMs: task.durationMs,
     resultText: task.resultText,
     error: task.error,
+    attemptCount: task.attemptCount,
+    maxAttempts: task.maxAttempts,
+    nextAttemptAt: task.nextAttemptAt ? new Date(task.nextAttemptAt).toISOString() : undefined,
+    lastCheckpointAt: task.lastCheckpointAt ? new Date(task.lastCheckpointAt).toISOString() : undefined,
+    lastRetryReason: task.lastRetryReason,
     metadata: task.metadata,
   };
 }

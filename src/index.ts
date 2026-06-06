@@ -19,6 +19,7 @@ import { startMemoryServer } from './memory/memory-server.js';
 import { DocSync } from './sync/doc-sync.js';
 import { MemoryClient } from './memory/memory-client.js';
 import { ManagerService } from './api/manager-service.js';
+import { configureDefaultTaskExecutionQueue } from './utils/task-execution-queue.js';
 
 import { SessionRegistry } from './session/session-registry.js';
 
@@ -125,6 +126,8 @@ async function startFeishuBot(
 async function main() {
   const appConfig = loadAppConfig();
   const logger = createLogger(appConfig.log.level);
+  configureDefaultTaskExecutionQueue(appConfig.taskExecution);
+  logger.info(appConfig.taskExecution, 'Configured task execution limits');
 
   // Ensure MEMORY_SECRET env var is available for Claude subprocesses (used by metamemory skill)
   if (appConfig.memory.secret && !process.env.MEMORY_SECRET) {

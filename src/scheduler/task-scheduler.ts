@@ -7,6 +7,12 @@ import type { BotRegistry } from '../api/bot-registry.js';
 import type { WebSocketHandle } from '../web/ws-server.js';
 import type { CardState } from '../types.js';
 import { isValidCron, nextCronOccurrence, getDefaultTimezone } from './cron-utils.js';
+import {
+  classifyRetryableTaskError,
+  maxRetriesFor,
+  retryDelayMs,
+  type RetryableTaskError,
+} from '../utils/retry-policy.js';
 
 export interface ScheduleMetadata {
   origin?: 'api' | 'manager-mcp' | 'cli';
@@ -28,6 +34,11 @@ export interface ScheduledTask {
   status: 'pending' | 'executing' | 'completed' | 'failed' | 'cancelled';
   createdAt: number;
   retryCount: number;
+  attemptCount?: number;
+  maxAttempts?: number;
+  nextAttemptAt?: number;
+  lastRetryReason?: string;
+  lastError?: string;
   parentRecurringId?: string;  // set if spawned by a recurring task
   metadata?: ScheduleMetadata;
 }
@@ -96,8 +107,7 @@ interface PersistedData {
 
 // --- Constants ---
 
-const MAX_RETRIES = 5;
-const RETRY_DELAY_MS = 30_000; // 30 seconds
+const DEFAULT_MAX_ATTEMPTS = 5;
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_SETTIMEOUT_MS = 2_147_483_647; // 2^31 - 1 (~24.8 days)
 const PERSIST_DIR = path.join(os.homedir(), '.metabot');
@@ -141,6 +151,8 @@ export class TaskScheduler {
       status: 'pending',
       createdAt: now,
       retryCount: 0,
+      attemptCount: 0,
+      maxAttempts: DEFAULT_MAX_ATTEMPTS,
       metadata: input.metadata,
     };
 
@@ -363,34 +375,7 @@ export class TaskScheduler {
       this.logger.error({ taskId: id, botName: task.botName }, 'Scheduled task: bot not found');
       task.status = 'failed';
       this.saveToDisk();
-      return;
-    }
-
-    // If chat is busy, retry
-    if (bot.bridge.isBusy(task.chatId)) {
-      if (task.retryCount < MAX_RETRIES) {
-        task.retryCount++;
-        this.logger.info({ taskId: id, retryCount: task.retryCount }, 'Chat busy, retrying scheduled task');
-        const timer = setTimeout(() => this.fireTask(id), RETRY_DELAY_MS);
-        this.timers.set(id, timer);
-        this.saveToDisk();
-        return;
-      }
-
-      // Max retries exceeded — notify user and mark failed
-      this.logger.warn({ taskId: id }, 'Scheduled task failed after max retries (chat busy)');
-      task.status = 'failed';
-      this.saveToDisk();
-      try {
-        await bot.sender.sendTextNotice(
-          task.chatId,
-          'Scheduled Task Failed',
-          `Task "${task.label || task.prompt.slice(0, 50)}" could not run because the chat was busy. Please retry manually.`,
-          'red',
-        );
-      } catch (err) {
-        this.logger.error({ err, taskId: id }, 'Failed to send task failure notification');
-      }
+      this.completeRecurringChild(task);
       return;
     }
 
@@ -408,6 +393,7 @@ export class TaskScheduler {
         chatId: task.chatId,
         userId: 'scheduler',
         sendCards: task.sendCards,
+        executionSource: 'scheduler',
         onUpdate: (state: CardState, _bridgeMessageId: string, final: boolean) => {
           // Stream updates to any WebSocket client subscribed to this chatId
           if (this.wsHandle) {
@@ -421,14 +407,63 @@ export class TaskScheduler {
 
       task.status = result.success ? 'completed' : 'failed';
       if (!result.success) {
+        if (this.scheduleRetryIfNeeded(task, result.error ?? 'Scheduled task failed')) return;
         this.logger.warn({ taskId: id, error: result.error }, 'Scheduled task completed with error');
+        task.lastError = result.error;
       }
     } catch (err: any) {
+      if (this.scheduleRetryIfNeeded(task, err)) return;
       this.logger.error({ err, taskId: id }, 'Scheduled task execution error');
       task.status = 'failed';
+      task.lastError = err?.message ?? 'Scheduled task execution error';
     }
 
     this.saveToDisk();
+    this.completeRecurringChild(task);
+  }
+
+  private scheduleRetryIfNeeded(task: ScheduledTask, error: unknown): boolean {
+    const classification = classifyRetryableTaskError(error);
+    if (!classification.retryable) return false;
+    const maxAttempts = task.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    const retryNumber = (task.attemptCount ?? task.retryCount ?? 0) + 1;
+    if (retryNumber > Math.min(maxAttempts, maxRetriesFor(classification))) return false;
+    this.scheduleRetry(task, classification, retryNumber);
+    return true;
+  }
+
+  private scheduleRetry(task: ScheduledTask, classification: RetryableTaskError, retryNumber: number): void {
+    const delayMs = retryDelayMs(classification, retryNumber);
+    task.status = 'pending';
+    task.retryCount = retryNumber;
+    task.attemptCount = retryNumber;
+    task.nextAttemptAt = Date.now() + delayMs;
+    task.executeAt = task.nextAttemptAt;
+    task.lastRetryReason = classification.reason;
+    task.lastError = classification.reason;
+    const timer = setTimeout(() => this.fireTask(task.id), delayMs);
+    this.timers.set(task.id, timer);
+    this.saveToDisk();
+    this.logger.info(
+      { taskId: task.id, retryNumber, delayMs, reason: classification.reason },
+      'Scheduled task retry queued',
+    );
+  }
+
+  private completeRecurringChild(task: ScheduledTask): void {
+    if (!task.parentRecurringId) return;
+    if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') return;
+    const recurring = this.recurringTasks.get(task.parentRecurringId);
+    if (!recurring || recurring.currentChildId !== task.id) return;
+    recurring.lastExecutedAt = Date.now();
+    recurring.currentChildId = undefined;
+    if (recurring.status !== 'active') return;
+    recurring.nextExecuteAt = nextCronOccurrence(recurring.cronExpr, recurring.timezone);
+    this.setRecurringTimer(recurring);
+    this.logger.info(
+      { recurringId: recurring.id, nextExecuteAt: new Date(recurring.nextExecuteAt).toISOString() },
+      'Recurring task: next occurrence scheduled',
+    );
   }
 
   // ===== Recurring timer internals =====
@@ -470,6 +505,8 @@ export class TaskScheduler {
       status: 'pending',
       createdAt: Date.now(),
       retryCount: 0,
+      attemptCount: 0,
+      maxAttempts: DEFAULT_MAX_ATTEMPTS,
       parentRecurringId: recurring.id,
       metadata: recurring.metadata,
     };
@@ -485,19 +522,6 @@ export class TaskScheduler {
 
     // Execute via existing fireTask (handles retries, bot lookup, etc.)
     await this.fireTask(child.id);
-
-    // After execution, schedule next occurrence (if still active)
-    recurring.lastExecutedAt = Date.now();
-    recurring.currentChildId = undefined;
-
-    if (recurring.status === 'active') {
-      recurring.nextExecuteAt = nextCronOccurrence(recurring.cronExpr, recurring.timezone);
-      this.setRecurringTimer(recurring);
-      this.logger.info(
-        { recurringId, nextExecuteAt: new Date(recurring.nextExecuteAt).toISOString() },
-        'Recurring task: next occurrence scheduled',
-      );
-    }
 
     this.saveToDisk();
   }
@@ -546,7 +570,11 @@ export class TaskScheduler {
 
       // Restore one-time tasks
       for (const task of taskList) {
-        // Skip completed/cancelled/failed tasks
+        if (task.status === 'executing') {
+          task.status = 'pending';
+          task.executeAt = now;
+          task.lastRetryReason = 'Process recovered while scheduled task was executing';
+        }
         if (task.status !== 'pending') continue;
 
         // Skip tasks that are more than 24h overdue (stale)
@@ -555,6 +583,11 @@ export class TaskScheduler {
           continue;
         }
 
+        task.attemptCount = task.attemptCount ?? task.retryCount ?? 0;
+        task.maxAttempts = task.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+        if (task.nextAttemptAt && task.nextAttemptAt > now) {
+          task.executeAt = task.nextAttemptAt;
+        }
         this.tasks.set(task.id, task);
         this.setTimer(task);
       }
@@ -569,8 +602,10 @@ export class TaskScheduler {
           // If there was a child task executing when process died, mark it failed
           if (recurring.currentChildId) {
             const child = taskList.find((t) => t.id === recurring.currentChildId);
-            if (child && (child.status === 'pending' || child.status === 'executing')) {
-              child.status = 'failed';
+            if (child && child.status === 'pending') {
+              this.tasks.set(child.id, child);
+              if (!this.timers.has(child.id)) this.setTimer(child);
+              continue;
             }
             recurring.currentChildId = undefined;
           }

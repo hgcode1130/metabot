@@ -390,6 +390,20 @@ Manager 配置示例：
 
 启用后，Claude manager 会获得 `metabot-manager` 工具：可异步派发 worker、查看状态/结果、取消任务、设置跨重启提醒。worker 默认使用隐藏的 synthetic 会话执行，不直接刷飞书聊天；每个任务都会持久化 `taskId`、`traceId`、事件时间线、费用、耗时、结果和错误，可通过 manager 工具或 `/api/manager/tasks?...` 追溯。
 
+进程级任务执行限制可以放在 `bots.json` 顶层或 `.env`：
+
+```json
+{
+  "taskExecution": {
+    "maxConcurrentTasks": 10,
+    "maxConcurrentTasksPerChat": 2,
+    "maxBackgroundWorkerTasks": 4
+  }
+}
+```
+
+`manager.maxConcurrentWorkerTasks` 仍然有效，实际 worker 并发取它和 `maxBackgroundWorkerTasks` 的较小值。临时 429/503/529、网关 HTTP 200 空/畸形响应、旧 chat-busy race 会按退避策略自动重排；manager worker 会写 checkpoint 并支持 resume。
+
 </details>
 
 <details>
@@ -399,6 +413,9 @@ Manager 配置示例：
 | --------------------------- | ----------------------- | ------------------------------------- |
 | `API_PORT`                  | 9100                    | HTTP API 端口                         |
 | `API_SECRET`                | —                       | Bearer 认证（同时保护 API 和 Web UI） |
+| `METABOT_MAX_CONCURRENT_TASKS` | 10                   | 全局同时执行任务上限                  |
+| `METABOT_MAX_CONCURRENT_TASKS_PER_CHAT` | 2          | 每个 bot+chat 同时执行任务上限        |
+| `METABOT_MAX_BACKGROUND_WORKER_TASKS` | 4             | manager/background worker 同时执行上限 |
 | `MEMORY_ENABLED`            | true                    | 启用 MetaMemory                       |
 | `MEMORY_PORT`               | 8100                    | MetaMemory 端口                       |
 | `MEMORY_ADMIN_TOKEN`        | —                       | 管理员 Token（完整访问）              |

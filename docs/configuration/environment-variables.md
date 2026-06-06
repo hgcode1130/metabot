@@ -11,6 +11,9 @@ All configuration is via `.env` file or system environment variables. Copy `.env
 | `FEISHU_APP_SECRET` | — | Feishu app secret (single-bot mode) |
 | `API_PORT` | `9100` | HTTP API port |
 | `API_SECRET` | — | Bearer token auth for API and MetaMemory. Generate one with `openssl rand -hex 32` |
+| `METABOT_MAX_CONCURRENT_TASKS` | `10` | Process-wide active task limit |
+| `METABOT_MAX_CONCURRENT_TASKS_PER_CHAT` | `2` | Active task limit per bot+chat |
+| `METABOT_MAX_BACKGROUND_WORKER_TASKS` | `4` | Active manager/background worker task limit |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 
 ## Claude Code

@@ -11,6 +11,9 @@
 | `FEISHU_APP_SECRET` | — | 飞书 App Secret（单 Bot 模式） |
 | `API_PORT` | `9100` | HTTP API 端口 |
 | `API_SECRET` | — | Bearer Token 认证 |
+| `METABOT_MAX_CONCURRENT_TASKS` | `10` | 全局同时执行任务上限 |
+| `METABOT_MAX_CONCURRENT_TASKS_PER_CHAT` | `2` | 每个 bot+chat 同时执行任务上限 |
+| `METABOT_MAX_BACKGROUND_WORKER_TASKS` | `4` | manager/background worker 同时执行上限 |
 | `LOG_LEVEL` | `info` | 日志级别（debug, info, warn, error） |
 
 ## Claude Code

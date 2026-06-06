@@ -8,7 +8,7 @@ vi.mock('better-sqlite3', async () => {
   return { default: mod.default };
 });
 import type { BotRegistry, RegisteredBot } from '../src/api/bot-registry.js';
-import { ManagerService, buildWorkerChatId, type ManagerScope } from '../src/api/manager-service.js';
+import { ManagerService, buildWorkerChatId, type ManagerScope, type ManagerServiceOptions } from '../src/api/manager-service.js';
 import { ManagerStore } from '../src/api/manager-store.js';
 import type { TaskScheduler, ScheduledTask, RecurringTask, ScheduleInput, RecurringScheduleInput } from '../src/scheduler/task-scheduler.js';
 import type { BotConfigBase } from '../src/config.js';
@@ -192,11 +192,11 @@ describe('ManagerService', () => {
     vi.restoreAllMocks();
   });
 
-  function createService(bots: RegisteredBot[]): ManagerService {
+  function createService(bots: RegisteredBot[], options: Partial<ManagerServiceOptions> = {}): ManagerService {
     const temp = createTempDbPath();
     tmpDir = temp.dir;
     store = new ManagerStore(createLogger(), { dbPath: temp.dbPath });
-    service = new ManagerService(createRegistry(bots), createScheduler().scheduler, createLogger(), { store });
+    service = new ManagerService(createRegistry(bots), createScheduler().scheduler, createLogger(), { store, ...options });
     return service;
   }
 
@@ -282,14 +282,15 @@ describe('ManagerService', () => {
     await waitFor(() => expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('manager_notified'));
     const details = managerService.getTask(scope, task.id, { includeEvents: true });
-    expect(details?.events?.map((event) => event.type).slice(0, 6)).toEqual([
+    const eventTypes = details?.events?.map((event) => event.type) ?? [];
+    expect(eventTypes.slice(0, 5)).toEqual([
       'created',
       'queued',
       'started',
       'worker_message',
-      'worker_update',
-      'completed',
+      'checkpoint',
     ]);
+    expect(eventTypes).toEqual(expect.arrayContaining(['worker_update', 'completed', 'manager_notified']));
     expect(details?.events?.find((event) => event.type === 'worker_message')?.payload)
       .toMatchObject({ message: { type: 'assistant' } });
     const update = details?.events?.find((event) => event.type === 'worker_update');
@@ -356,6 +357,46 @@ describe('ManagerService', () => {
 
     workerResult.resolve({ success: true, responseText: 'done' });
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
+  });
+
+  it('retries retryable worker failures and keeps the same task id', async () => {
+    const executeApiTask = vi.fn()
+      .mockResolvedValueOnce({ success: false, responseText: 'partial', error: 'API Error: 429 rate_limit_error' })
+      .mockResolvedValueOnce({ success: true, responseText: 'done after retry' });
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker], { retryDelayMs: () => 0 });
+
+    const task = await managerService.dispatchTask(scope, { workerBotName: 'worker-a', prompt: 'retry me' });
+
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
+    const details = managerService.getTask(scope, task.id, { includeEvents: true });
+    expect(details?.id).toBe(task.id);
+    expect(details?.attemptCount).toBe(1);
+    expect(details?.events?.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'retry_scheduled',
+      'retry_started',
+      'completed',
+    ]));
+  });
+
+  it('marks retryable worker failures failed only after retry exhaustion', async () => {
+    const executeApiTask = vi.fn(async () => ({
+      success: false,
+      responseText: '',
+      error: 'HTTP 503 service unavailable',
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker], { retryDelayMs: () => 0 });
+
+    const task = await managerService.dispatchTask(scope, { workerBotName: 'worker-a', prompt: 'fail eventually' });
+
+    await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('failed'));
+    expect(executeApiTask).toHaveBeenCalledTimes(6);
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type);
+    expect(events).toEqual(expect.arrayContaining(['retry_scheduled', 'retry_exhausted', 'failed']));
   });
 
   it('attaches a new prompt to a running worker session when possible', async () => {
@@ -542,7 +583,7 @@ describe('ManagerService', () => {
     expect(managerService.getTask(scope, task.id)?.status).toBe('cancelled');
   });
 
-  it('marks interrupted tasks failed on startup', () => {
+  it('requeues interrupted tasks on startup', async () => {
     const temp = createTempDbPath();
     tmpDir = temp.dir;
     store = new ManagerStore(createLogger(), { dbPath: temp.dbPath });
@@ -555,11 +596,43 @@ describe('ManagerService', () => {
     });
 
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
-    const worker = createBot('worker-a');
+    const workerResult = deferred<ApiTaskResult>();
+    const executeApiTask = vi.fn((_options: ApiTaskOptions) => workerResult.promise);
+    const worker = createBot('worker-a', undefined, executeApiTask);
     service = new ManagerService(createRegistry([manager, worker]), createScheduler().scheduler, createLogger(), { store });
 
-    expect(store.getTask(interrupted.id)?.status).toBe('failed');
-    expect(store.listEvents(interrupted.id).map((event) => event.type)).toContain('process_recovered');
+    expect(store.getTask(interrupted.id)?.status).toBe('queued');
+    const recoveredEvents = store.listEvents(interrupted.id).map((event) => event.type);
+    expect(recoveredEvents).toContain('process_recovered');
+    expect(recoveredEvents).toContain('resume_queued');
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
+    workerResult.resolve({ success: true, responseText: 'recovered' });
+    await waitFor(() => expect(store.getTask(interrupted.id)?.status).toBe('completed'));
+  });
+
+  it('resumes failed or queued tasks and rejects completed tasks', async () => {
+    const workerResult = deferred<ApiTaskResult>();
+    const executeApiTask = vi.fn((_options: ApiTaskOptions) => workerResult.promise);
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const failed = store!.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker-a',
+      workerChatId: 'manager-worker-resume',
+      prompt: 'resume me',
+    });
+    store!.updateTask(failed.id, { status: 'failed', completedAt: Date.now(), error: 'transient' });
+    const resumed = managerService.resumeTask(scope, failed.id);
+
+    expect(resumed.status).toBe('queued');
+    expect(managerService.getTask(scope, failed.id, { includeEvents: true })?.events?.map((event) => event.type))
+      .toContain('resume_queued');
+    workerResult.resolve({ success: true, responseText: 'resumed' });
+    await waitFor(() => expect(managerService.getTask(scope, failed.id)?.status).toBe('completed'));
+    expect(() => managerService.resumeTask(scope, failed.id)).toThrow('cannot be resumed');
   });
 
   it('schedules, lists, and cancels manager-owned reminders with metadata', () => {
