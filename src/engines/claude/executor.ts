@@ -9,6 +9,7 @@ import type { Logger } from '../../utils/logger.js';
 import { AsyncQueue } from '../../utils/async-queue.js';
 import { buildLarkCliGuidance } from './lark-cli-guidance.js';
 import { buildManagerWorkerGuidance } from './manager-worker-guidance.js';
+import { makeCanUseTool } from './exit-plan-mode.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -536,6 +537,14 @@ export class ClaudeExecutor {
         return {};
       };
     };
+
+    // ExitPlanMode: the native tool's checkPermissions returns
+    // `{behavior: "ask", message: "Exit plan mode?"}` even under
+    // bypassPermissions, and that "ask" routes through the can_use_tool
+    // control_request — NOT through PreToolUse hooks. We auto-allow via
+    // canUseTool; the bridge still ships the plan body to the user as a
+    // separate card (StreamProcessor + sendPlanContent).
+    queryOptions.canUseTool = makeCanUseTool(this.logger);
 
     queryOptions.hooks = {
       PreToolUse: [{
