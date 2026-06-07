@@ -44,23 +44,26 @@ function buildHandler(opts: HandlerOpts = {}) {
   };
   const audit = { log: () => {} } as any;
 
-  const handler = new CommandHandler(
-    { name: 'test-bot' } as any,
-    { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as any,
-    sender as any,
-    {} as any, // sessionManager — not touched by /stop
-    {} as any, // memoryClient — not touched
+  const handler = new CommandHandler({
+    config: { name: 'test-bot' } as any,
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as any,
+    sender: sender as any,
+    sessionManager: {} as any, // not touched by /stop
+    memoryClient: {} as any, // not touched
     audit,
-    () => (opts.hasRunningTask ? { startTime: Date.now() - 1000 } : undefined),
-    () => { stopTaskCalls++; },
-    () => {
-      clearQueueCalls++;
-      const cleared = queueDepth;
-      queueDepth = 0;
-      return cleared;
+    hooks: {
+      getRunningTask: () => (opts.hasRunningTask ? { startTime: Date.now() - 1000 } : undefined),
+      stopTask: () => { stopTaskCalls++; },
+      clearQueue: () => {
+        clearQueueCalls++;
+        const cleared = queueDepth;
+        queueDepth = 0;
+        return cleared;
+      },
+      releaseExecutor: async () => {},
+      restartService: async () => {},
     },
-    async () => {},
-  );
+  });
   return {
     handler,
     notices,

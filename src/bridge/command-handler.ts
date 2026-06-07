@@ -8,34 +8,49 @@ import { MemoryClient } from '../memory/memory-client.js';
 import { AuditLogger } from '../utils/audit-logger.js';
 import type { DocSync } from '../sync/doc-sync.js';
 
+export interface RestartServiceInput {
+  chatId: string;
+  userId?: string;
+  reason: string;
+}
+
+export interface CommandHandlerHooks {
+  getRunningTask: (chatId: string) => { startTime: number } | undefined;
+  stopTask: (chatId: string) => void;
+  clearQueue: (chatId: string) => number;
+  releaseExecutor: (chatId: string, reason: string) => Promise<void>;
+  restartService: (input: RestartServiceInput) => Promise<void>;
+}
+
+export interface CommandHandlerOptions {
+  config: BotConfigBase;
+  logger: Logger;
+  sender: IMessageSender;
+  sessionManager: SessionManager;
+  memoryClient: MemoryClient;
+  audit: AuditLogger;
+  hooks: CommandHandlerHooks;
+}
+
 export class CommandHandler {
   private docSync: DocSync | null = null;
+  private readonly config: BotConfigBase;
+  private readonly logger: Logger;
+  private readonly sender: IMessageSender;
+  private readonly sessionManager: SessionManager;
+  private readonly memoryClient: MemoryClient;
+  private readonly audit: AuditLogger;
+  private readonly hooks: CommandHandlerHooks;
 
-  constructor(
-    private config: BotConfigBase,
-    private logger: Logger,
-    private sender: IMessageSender,
-    private sessionManager: SessionManager,
-    private memoryClient: MemoryClient,
-    private audit: AuditLogger,
-    private getRunningTask: (chatId: string) => { startTime: number } | undefined,
-    private stopTask: (chatId: string) => void,
-    /**
-     * Drain the chat's queued-message buffer, returning the number of
-     * messages discarded. Called from /stop so the user's "stop" intent
-     * isn't immediately undone by the next queued message — without this
-     * the bridge's processQueue would start the next one as soon as the
-     * aborted task's finally block runs.
-     */
-    private clearQueue: (chatId: string) => number,
-    /**
-     * Release the persistent Claude process associated with this chat
-     * (no-op if the persistent-executor feature flag is off or no
-     * executor exists). Called on /reset so teammates and /goal state
-     * tied to the old session are torn down with the conversation.
-     */
-    private releaseExecutor: (chatId: string, reason: string) => Promise<void>,
-  ) {}
+  constructor(options: CommandHandlerOptions) {
+    this.config = options.config;
+    this.logger = options.logger;
+    this.sender = options.sender;
+    this.sessionManager = options.sessionManager;
+    this.memoryClient = options.memoryClient;
+    this.audit = options.audit;
+    this.hooks = options.hooks;
+  }
 
   /** Set the doc sync service (optional, only available for Feishu bots). */
   setDocSync(docSync: DocSync): void {
@@ -58,6 +73,7 @@ export class CommandHandler {
           '**Bot Commands:**',
           '`/reset` - Clear session, start fresh',
           '`/stop` - Abort current running task',
+          '`/restart` - Restart the MetaBot service',
           '`/status` - Show current session info',
           '`/model` - Show current engine/model; `/model list` - Available options',
           '`/model claude`, `/model kimi`, or `/model codex` - Switch engine (resets session)',
@@ -91,7 +107,7 @@ export class CommandHandler {
         // stale (now-cleared) sessionId mapping. No-op when persistent mode
         // is off. Best-effort — log but don't fail the /reset on shutdown errors.
         try {
-          await this.releaseExecutor(chatId, 'reset-command');
+          await this.hooks.releaseExecutor(chatId, 'reset-command');
         } catch (err) {
           this.logger.warn({ err, chatId }, 'Failed to release persistent executor on /reset');
         }
@@ -99,14 +115,14 @@ export class CommandHandler {
         return true;
 
       case '/stop': {
-        const task = this.getRunningTask(chatId);
+        const task = this.hooks.getRunningTask(chatId);
         // Always drain the queue first — otherwise the running task's
         // finally block immediately picks the next queued message via
         // processQueue and the user's "stop" intent silently fails.
-        const cleared = this.clearQueue(chatId);
+        const cleared = this.hooks.clearQueue(chatId);
         if (task) {
           this.audit.log({ event: 'task_stopped', botName: this.config.name, chatId, userId, durationMs: Date.now() - task.startTime, meta: { clearedQueue: cleared } });
-          this.stopTask(chatId);
+          this.hooks.stopTask(chatId);
           const body = cleared > 0
             ? `Current task aborted. Discarded **${cleared}** queued message${cleared === 1 ? '' : 's'}.`
             : 'Current task has been aborted.';
@@ -126,9 +142,13 @@ export class CommandHandler {
         return true;
       }
 
+      case '/restart':
+        await this.handleRestartCommand(chatId, userId);
+        return true;
+
       case '/status': {
         const session = this.sessionManager.getSession(chatId);
-        const isRunning = !!this.getRunningTask(chatId);
+        const isRunning = !!this.hooks.getRunningTask(chatId);
         const botEngine = resolveEngineName(this.config);
         const activeEngine = session.engine ?? botEngine;
         const defaultModel = this.defaultModelForEngine(activeEngine) || '_default_';
@@ -215,6 +235,27 @@ export class CommandHandler {
     } catch (err: any) {
       this.logger.error({ err, chatId }, 'Memory command error');
       await this.sender.sendTextNotice(chatId, '❌ Memory Error', `Failed to connect to memory server: ${err.message}`, 'red');
+    }
+  }
+
+  private async handleRestartCommand(chatId: string, userId?: string): Promise<void> {
+    this.audit.log({ event: 'service_restart_requested', botName: this.config.name, chatId, userId, prompt: '/restart' });
+    try {
+      await this.sender.sendTextNotice(
+        chatId,
+        '🔄 Restarting',
+        'MetaBot service restart requested. The chat may be unavailable briefly.',
+        'orange',
+      );
+    } catch (err) {
+      this.logger.warn({ err, chatId }, 'Failed to send restart notice before service restart');
+    }
+
+    try {
+      await this.hooks.restartService({ chatId, userId, reason: '/restart command' });
+    } catch (err: any) {
+      this.logger.error({ err, chatId }, 'Failed to restart MetaBot service');
+      await this.sender.sendTextNotice(chatId, '❌ Restart Failed', err?.message || 'Failed to restart MetaBot service.', 'red');
     }
   }
 

@@ -35,18 +35,21 @@ function buildHandler() {
     downloadFile:    async () => true,
   };
   const audit = { log: () => {} } as any;
-  const handler = new CommandHandler(
-    { name: 'test-bot' } as any,
-    { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as any,
-    sender as any,
-    {} as any, // sessionManager — not touched by /help
-    {} as any, // memoryClient — not touched
+  const handler = new CommandHandler({
+    config: { name: 'test-bot' } as any,
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as any,
+    sender: sender as any,
+    sessionManager: {} as any, // not touched by /help
+    memoryClient: {} as any, // not touched
     audit,
-    () => undefined, // getRunningTask
-    () => {},        // stopTask
-    () => 0,         // clearQueue — /help doesn't touch the queue
-    async () => {},  // releaseExecutor
-  );
+    hooks: {
+      getRunningTask: () => undefined,
+      stopTask: () => {},
+      clearQueue: () => 0,
+      releaseExecutor: async () => {},
+      restartService: async () => {},
+    },
+  });
   return { handler, notices };
 }
 
@@ -75,7 +78,7 @@ describe('CommandHandler /help', () => {
     const { handler, notices } = buildHandler();
     await handler.handle(helpMessage());
     const body = notices[0].content;
-    for (const cmd of ['/reset', '/stop', '/status', '/model', '/memory', '/sync', '/help']) {
+    for (const cmd of ['/reset', '/stop', '/restart', '/status', '/model', '/memory', '/sync', '/help']) {
       expect(body, `help body missing ${cmd}`).toContain(cmd);
     }
   });

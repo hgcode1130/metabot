@@ -10,6 +10,7 @@ export type AuditEvent =
   | 'task_queued'
   | 'queue_cleared'
   | 'command'
+  | 'service_restart_requested'
   | 'auth_denied'
   | 'api_task_start'
   | 'api_task_complete';

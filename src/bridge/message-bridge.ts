@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import * as path from 'node:path';
+import { spawn } from 'node:child_process';
 import type { BotConfigBase } from '../config.js';
 import type { Logger } from '../utils/logger.js';
 import type { IncomingMessage, CardState, PendingQuestion, TeamState, TeamMember, TeamTask } from '../types.js';
@@ -22,7 +23,7 @@ import { RateLimiter } from './rate-limiter.js';
 import { OutputsManager } from './outputs-manager.js';
 import { MemoryClient } from '../memory/memory-client.js';
 import { AuditLogger } from '../utils/audit-logger.js';
-import { CommandHandler } from './command-handler.js';
+import { CommandHandler, type RestartServiceInput } from './command-handler.js';
 import { OutputHandler } from './output-handler.js';
 import { CostTracker } from '../utils/cost-tracker.js';
 import { metrics } from '../utils/metrics.js';
@@ -84,6 +85,7 @@ const SPONTANEOUS_SNIPPET_MAX_CHARS = 4000;
 const SPONTANEOUS_BODY_MAX_CHARS = 12000;
 const FINAL_CARD_RETRIES = 3;
 const FINAL_CARD_BASE_DELAY_MS = 2000;
+const SERVICE_RESTART_DELAY_MS = 1000;
 const TASK_TIMEOUT_MESSAGE = 'Task timed out (24 hour limit)';
 const IDLE_TIMEOUT_MESSAGE = 'Task aborted: no activity for 1 hour';
 const BATCH_DEBOUNCE_MS = 2000; // 2s window to collect multiple images/files
@@ -387,19 +389,48 @@ export class MessageBridge {
 
     const memoryClient = new MemoryClient(memoryServerUrl, logger, memorySecret);
 
-    this.commandHandler = new CommandHandler(
-      config, logger, sender, this.sessionManager, memoryClient, this.audit,
-      (chatId) => this.runningTasks.get(chatId),
-      (chatId) => this.stopTask(chatId),
-      (chatId) => this.clearChatQueue(chatId),
-      (chatId, reason) => this.releaseChatExecutor(chatId, reason),
-    );
+    this.commandHandler = new CommandHandler({
+      config,
+      logger,
+      sender,
+      sessionManager: this.sessionManager,
+      memoryClient,
+      audit: this.audit,
+      hooks: {
+        getRunningTask: (chatId) => this.runningTasks.get(chatId),
+        stopTask: (chatId) => this.stopTask(chatId),
+        clearQueue: (chatId) => this.clearChatQueue(chatId),
+        releaseExecutor: (chatId, reason) => this.releaseChatExecutor(chatId, reason),
+        restartService: (input) => this.restartService(input),
+      },
+    });
 
     this.outputHandler = new OutputHandler(logger, sender, this.outputsManager);
   }
 
   setManagerService(service: ManagerService): void {
     this.managerService = service;
+  }
+
+  private async restartService(input: RestartServiceInput): Promise<void> {
+    const scriptPath = path.resolve(process.cwd(), 'scripts/restart-metabot.sh');
+    if (!fs.existsSync(scriptPath)) {
+      throw new Error(`Restart script not found: ${scriptPath}`);
+    }
+
+    this.logger.info({ chatId: input.chatId, userId: input.userId, reason: input.reason }, 'Scheduling MetaBot service restart');
+    setTimeout(() => {
+      const child = spawn('bash', [scriptPath, 'metabot'], {
+        cwd: process.cwd(),
+        detached: true,
+        stdio: 'ignore',
+        env: process.env,
+      });
+      child.on('error', (err) => {
+        this.logger.error({ err }, 'MetaBot service restart command failed to spawn');
+      });
+      child.unref();
+    }, SERVICE_RESTART_DELAY_MS);
   }
 
   private buildManagerMcpServers(chatId: string): SdkMcpServers | undefined {
