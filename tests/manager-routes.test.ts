@@ -179,6 +179,55 @@ describe('manager routes', () => {
     expect(out.body.events[0].type).toBe('completed');
   });
 
+  it('gets filtered task events with bounded preview options', async () => {
+    const svc = service();
+    const out = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req(),
+      out,
+      'GET',
+      '/api/manager/tasks/mgrtask-1/events?managerBotName=manager&managerChatId=chat-a&limit=5&type=completed&payload=preview',
+    );
+    expect(out.statusCode).toBe(200);
+    expect(out.body.events[0].type).toBe('completed');
+    expect(svc.getTask).toHaveBeenCalledWith(
+      { managerBotName: 'manager', managerChatId: 'chat-a' },
+      'mgrtask-1',
+      {
+        includeEvents: true,
+        eventLimit: 5,
+        eventPayload: 'preview',
+        eventType: 'completed',
+      },
+    );
+  });
+
+  it('rejects invalid manager event filters', async () => {
+    const svc = service();
+    const invalidType = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req(),
+      invalidType,
+      'GET',
+      '/api/manager/tasks/mgrtask-1/events?managerBotName=manager&managerChatId=chat-a&type=not_real',
+    );
+    expect(invalidType.statusCode).toBe(400);
+    expect(invalidType.body.error).toContain('Invalid manager event type');
+
+    const invalidPayload = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req(),
+      invalidPayload,
+      'GET',
+      '/api/manager/tasks/mgrtask-1/events?managerBotName=manager&managerChatId=chat-a&payload=raw',
+    );
+    expect(invalidPayload.statusCode).toBe(400);
+    expect(invalidPayload.body.error).toContain('Invalid event payload mode');
+  });
+
   it('resumes manager tasks', async () => {
     const svc = service();
     const out = res();

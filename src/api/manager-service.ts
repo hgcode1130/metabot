@@ -1,7 +1,15 @@
 import * as crypto from 'node:crypto';
 import type { BotRegistry, RegisteredBot } from './bot-registry.js';
 import type { CircuitBreaker } from './circuit-breaker.js';
-import { ManagerStore, type ManagerStoreOptions, type ManagerTask, type ManagerTaskEvent, type ManagerTaskStatus } from './manager-store.js';
+import {
+  ManagerStore,
+  type ManagerStoreOptions,
+  type ManagerTask,
+  type ManagerTaskEvent,
+  type ManagerTaskEventPayloadMode,
+  type ManagerTaskEventType,
+  type ManagerTaskStatus,
+} from './manager-store.js';
 import type { TaskScheduler, ScheduledTask, RecurringTask, ScheduleMetadata } from '../scheduler/task-scheduler.js';
 import type { CardState } from '../types.js';
 import type { Logger } from '../utils/logger.js';
@@ -35,6 +43,14 @@ import {
   type WorkerArtifact,
   type WorkerResult,
 } from './worker-result.js';
+import {
+  ManagerTraceRecorder,
+  managerTracePolicyFromMetadata,
+  managerTracePolicyMetadata,
+  resolveManagerTracePolicy,
+  type ManagerTracePolicy,
+} from './manager-trace-policy.js';
+import { resolveEngineName } from '../engines/index.js';
 
 export interface ManagerScope {
   managerBotName: string;
@@ -77,6 +93,9 @@ export type SendWorkerPromptResult =
 
 export interface GetTaskOptions {
   includeEvents?: boolean;
+  eventLimit?: number;
+  eventType?: ManagerTaskEventType;
+  eventPayload?: ManagerTaskEventPayloadMode;
 }
 
 export interface ListTasksFilter {
@@ -140,6 +159,7 @@ export interface ManagerServiceOptions extends ManagerStoreOptions {
   store?: ManagerStore;
   retryDelayMs?: (classification: RetryableTaskError, retryNumber: number) => number;
   circuitBreaker?: CircuitBreaker;
+  tracePolicy?: ManagerTracePolicy;
 }
 
 interface WorkerQueueEntry {
@@ -168,6 +188,7 @@ export class ManagerService {
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryDelay: (classification: RetryableTaskError, retryNumber: number) => number;
   private readonly circuitBreaker?: CircuitBreaker;
+  private readonly tracePolicy: ManagerTracePolicy;
 
   constructor(
     private readonly registry: BotRegistry,
@@ -180,6 +201,7 @@ export class ManagerService {
     this.ownsStore = !options.store;
     this.retryDelay = options.retryDelayMs ?? ((classification, retryNumber) => retryDelayMs(classification, retryNumber));
     this.circuitBreaker = options.circuitBreaker;
+    this.tracePolicy = options.tracePolicy ?? resolveManagerTracePolicy();
 
     this.recoverInterruptedTasks();
   }
@@ -226,6 +248,7 @@ export class ManagerService {
 
     const workerChatId = buildWorkerChatId(scope, worker.name, input.sessionKey);
     const taskTemplate = normalizeWorkerTaskTemplate(input.taskTemplate);
+    const tracePolicy = this.tracePolicy;
     const contract = buildInstructionContract({
       prompt: input.prompt,
       metadata: {
@@ -249,6 +272,7 @@ export class ManagerService {
         taskTemplate,
         outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION,
         instructionContract: contractMetadata(contract),
+        tracePolicy,
         sendCards: input.sendCards ?? false,
         sideEffectClass: contract.sideEffectClass,
         ...(contract.idempotencyKey ? { idempotencyKey: contract.idempotencyKey } : {}),
@@ -258,6 +282,7 @@ export class ManagerService {
     });
     this.store.appendEvent(task.id, 'instruction_contract', contractMetadata(contract));
     this.store.appendEvent(task.id, 'queued', { workerChatId });
+    this.store.appendEvent(task.id, 'trace_policy', { ...managerTracePolicyMetadata(tracePolicy) });
 
     this.enqueueWorkerTask(task.id, workerChatId, input.sendCards ?? false);
 
@@ -279,6 +304,30 @@ export class ManagerService {
     const running = this.findRunningTask(scope, worker.name, workerChatId);
     if (!running) {
       const task = await this.dispatchTask(scope, { ...input, sendCards: input.sendCards ?? false });
+      return { mode: 'dispatched', task };
+    }
+    if (!canAttachPromptToRunningTask(worker)) {
+      const task = await this.dispatchTask(scope, {
+        ...input,
+        sendCards: input.sendCards ?? false,
+        relatedTaskId: input.relatedTaskId ?? running.id,
+        metadata: {
+          ...(input.metadata ?? {}),
+          followUpMode: 'queued_task',
+          followUpFromTaskId: running.id,
+        },
+      });
+      this.store.appendEvent(running.id, 'prompt_queued_as_task', {
+        taskId: task.id,
+        queuedTaskId: task.id,
+        queuedTraceId: task.traceId,
+        prompt: input.prompt,
+        promptLength: input.prompt.length,
+        reason: 'live_prompt_injection_unsupported',
+        sessionKey: input.sessionKey ?? DEFAULT_SESSION_KEY,
+        relatedTaskId: task.metadata?.relatedTaskId,
+        followUpMode: 'queued_task',
+      });
       return { mode: 'dispatched', task };
     }
 
@@ -330,7 +379,14 @@ export class ManagerService {
     const task = this.store.getTask(taskId);
     if (!task || !isTaskInScope(task, scope)) return undefined;
     if (!options.includeEvents) return task;
-    return { ...task, events: this.store.listEvents(task.id) };
+    return {
+      ...task,
+      events: this.store.listEvents(task.id, {
+        limit: options.eventLimit,
+        type: options.eventType,
+        payload: options.eventPayload ?? 'preview',
+      }),
+    };
   }
 
   listTasks(scope: ManagerScope, filter: ListTasksFilter = {}): ManagerTask[] {
@@ -657,6 +713,7 @@ export class ManagerService {
       { attempt, workerChatId: task.workerChatId },
     );
     const contract = instructionContractForTask(task);
+    const traceRecorder = new ManagerTraceRecorder(tracePolicyForTask(task, this.tracePolicy));
 
     try {
       const result = await worker.bridge.executeApiTask({
@@ -668,6 +725,7 @@ export class ManagerService {
         backgroundWorker: true,
         actionGatePolicy: {
           forbiddenActions: contract.forbiddenActions,
+          sideEffectClass: contract.sideEffectClass,
           taskId: task.id,
           traceId: task.traceId,
         },
@@ -680,11 +738,15 @@ export class ManagerService {
           });
         },
         onRawMessage: (message) => {
-          this.store.appendEvent(task.id, 'worker_message', { message });
+          if (traceRecorder.shouldRecordWorkerMessage()) {
+            this.store.appendEvent(task.id, 'worker_message', { message });
+          }
           checkpoint.fromRaw(message);
         },
         onUpdate: (state: CardState, messageId: string, final: boolean) => {
-          this.store.appendEvent(task.id, 'worker_update', workerUpdatePayload(state, messageId, final));
+          if (traceRecorder.shouldRecordWorkerUpdate(final)) {
+            this.store.appendEvent(task.id, 'worker_update', workerUpdatePayload(state, messageId, final));
+          }
           checkpoint.fromUpdate(state, final);
         },
       });
@@ -761,9 +823,7 @@ export class ManagerService {
   }
 
   private latestCheckpointSummary(taskId: string): string {
-    const checkpoint = this.store.listEvents(taskId)
-      .filter((event) => event.type === 'checkpoint')
-      .at(-1);
+    const checkpoint = this.store.listEvents(taskId, { type: 'checkpoint', limit: 1, payload: 'full' }).at(-1);
     return checkpointSummary(checkpoint?.payload);
   }
 
@@ -963,6 +1023,10 @@ function shouldWrapFollowUpPrompt(input: DispatchTaskInput): boolean {
   );
 }
 
+function canAttachPromptToRunningTask(worker: RegisteredBot): boolean {
+  return resolveEngineName(worker.config) === 'claude';
+}
+
 function normalizeWaitTimeoutSeconds(waitTimeoutSeconds: number | undefined): number {
   if (waitTimeoutSeconds === undefined || waitTimeoutSeconds <= 0 || !Number.isFinite(waitTimeoutSeconds)) {
     return 0;
@@ -984,6 +1048,10 @@ function executionAttemptNumber(task: ManagerTask): number {
 
 function sendCardsForTask(task: Pick<ManagerTask, 'metadata'>): boolean {
   return task.metadata?.sendCards === true;
+}
+
+function tracePolicyForTask(task: Pick<ManagerTask, 'metadata'>, fallback: ManagerTracePolicy): ManagerTracePolicy {
+  return managerTracePolicyFromMetadata(task.metadata?.tracePolicy) ?? fallback;
 }
 
 function shouldIncludeResumeInstructions(task: ManagerTask): boolean {

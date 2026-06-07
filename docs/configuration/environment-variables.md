@@ -14,6 +14,7 @@ All configuration is via `.env` file or system environment variables. Copy `.env
 | `METABOT_MAX_CONCURRENT_TASKS` | `10` | Process-wide active task limit |
 | `METABOT_MAX_CONCURRENT_TASKS_PER_CHAT` | `2` | Active task limit per bot+chat |
 | `METABOT_MAX_BACKGROUND_WORKER_TASKS` | `4` | Active manager/background worker task limit |
+| `METABOT_MANAGER_TRACE_POLICY` | `summary` | Manager worker trace storage: `summary` records lifecycle, checkpoints, first raw event, first/final updates, and structured results; `full` records every worker stream event |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 
 ## Claude Code

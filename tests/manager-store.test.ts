@@ -127,6 +127,33 @@ describe('ManagerStore', () => {
     ]);
   });
 
+  it('lists bounded events by type and previews large payloads explicitly', () => {
+    const managerStore = createStore();
+    const task = managerStore.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker',
+      workerChatId: 'manager-worker-abc',
+      prompt: 'Do work',
+    });
+
+    managerStore.appendEvent(task.id, 'worker_update', { responseText: 'first' });
+    managerStore.appendEvent(task.id, 'checkpoint', { responseText: 'middle' });
+    managerStore.appendEvent(task.id, 'worker_update', { responseText: 'x'.repeat(2500) });
+
+    const latestUpdate = managerStore.listEvents(task.id, {
+      type: 'worker_update',
+      limit: 1,
+      payload: 'preview',
+    });
+
+    expect(latestUpdate).toHaveLength(1);
+    expect(latestUpdate[0]).toMatchObject({
+      type: 'worker_update',
+      payload: { truncated: true, originalLength: expect.any(Number) },
+    });
+  });
+
   it('lists tasks by manager scope, status, worker, and limit', () => {
     const managerStore = createStore();
     const first = managerStore.createTask({

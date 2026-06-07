@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import type { Logger } from '../utils/logger.js';
 import type { ManagerScope, ManagerService } from './manager-service.js';
+import { MANAGER_TASK_EVENT_TYPES } from './manager-store.js';
 import { WORKER_TASK_TEMPLATES } from './manager-worker-template.js';
 
 const MAX_WAIT_TIMEOUT_SECONDS = 60;
 const MAX_LIST_TASKS_LIMIT = 100;
+const MAX_EVENT_LIST_LIMIT = 1000;
 
 export const MANAGER_MCP_SERVER_NAME = 'metabot-manager';
 export const MANAGER_TOOL_NAMES = [
@@ -51,6 +53,8 @@ export interface ManagerToolResult {
 const taskTemplate = z.enum(WORKER_TASK_TEMPLATES);
 const sideEffectClass = z.enum(['none', 'readOnly', 'externalWrite']);
 const metadata = z.record(z.string(), z.unknown());
+const managerEventType = z.enum(MANAGER_TASK_EVENT_TYPES);
+const eventPayloadMode = z.enum(['preview', 'full']);
 
 const dispatchInput = {
   workerBotName: z.string().min(1).describe('Allowed worker bot name'),
@@ -114,9 +118,20 @@ export const MANAGER_TOOL_SPECS: ManagerToolSpec[] = [
   {
     name: 'get_worker_task',
     description: 'Get one delegated worker task, optionally including the event timeline for traceability.',
-    inputSchema: { taskId: z.string().min(1), includeEvents: z.boolean().optional() },
+    inputSchema: {
+      taskId: z.string().min(1),
+      includeEvents: z.boolean().optional(),
+      eventLimit: z.number().int().min(1).max(MAX_EVENT_LIST_LIMIT).optional(),
+      eventType: managerEventType.optional(),
+      eventPayload: eventPayloadMode.optional(),
+    },
     run: ({ service, scope, args }) =>
-      service.getTask(scope, String(args.taskId), { includeEvents: args.includeEvents === true }) ?? {
+      service.getTask(scope, String(args.taskId), {
+        includeEvents: args.includeEvents === true,
+        eventLimit: numberArg(args.eventLimit),
+        eventType: managerEventTypeArg(args.eventType),
+        eventPayload: eventPayloadArg(args.eventPayload) ?? 'preview',
+      }) ?? {
         error: `Manager task not found: ${String(args.taskId)}`,
       },
   },
@@ -214,4 +229,18 @@ function wrapResult(result: unknown): Record<string, unknown> {
 
 function stringArg(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function numberArg(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function managerEventTypeArg(value: unknown): (typeof MANAGER_TASK_EVENT_TYPES)[number] | undefined {
+  return typeof value === 'string' && (MANAGER_TASK_EVENT_TYPES as readonly string[]).includes(value)
+    ? value as (typeof MANAGER_TASK_EVENT_TYPES)[number]
+    : undefined;
+}
+
+function eventPayloadArg(value: unknown): 'preview' | 'full' | undefined {
+  return value === 'preview' || value === 'full' ? value : undefined;
 }

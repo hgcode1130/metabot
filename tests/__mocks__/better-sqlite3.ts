@@ -88,7 +88,14 @@ export default class FakeDatabase {
 
     if (sql.startsWith('INSERT INTO manager_task_events')) {
       const [id, taskId, type, payloadJson, createdAt] = params;
-      this.state.events.push({ id, task_id: taskId, type, payload_json: payloadJson, created_at: createdAt });
+      this.state.events.push({
+        id,
+        task_id: taskId,
+        type,
+        payload_json: payloadJson,
+        created_at: createdAt,
+        rowid: this.state.events.length + 1,
+      });
       return { changes: 1 };
     }
 
@@ -186,10 +193,19 @@ export default class FakeDatabase {
   }
 
   private all(sql: string, params: any[]) {
-    if (sql.startsWith('SELECT * FROM manager_task_events WHERE task_id = ?')) {
-      return this.state.events
-        .filter((event) => event.task_id === params[0])
-        .sort((a, b) => a.created_at - b.created_at);
+    if (sql.includes('FROM manager_task_events')) {
+      let idx = 0;
+      const taskId = params[idx++];
+      let rows = this.state.events.filter((event) => event.task_id === taskId);
+      if (sql.includes('AND type = ?')) {
+        const value = params[idx++];
+        rows = rows.filter((event) => event.type === value);
+      }
+      const limit = params[idx] ?? 200;
+      return rows
+        .sort((a, b) => (b.created_at - a.created_at) || (b.rowid - a.rowid))
+        .slice(0, limit)
+        .sort((a, b) => (a.created_at - b.created_at) || (a.rowid - b.rowid));
     }
 
     if (sql.startsWith('SELECT * FROM activity_events')) {

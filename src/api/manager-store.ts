@@ -7,34 +7,47 @@ import type { Logger } from '../utils/logger.js';
 
 export type ManagerTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
-export type ManagerTaskEventType =
-  | 'created'
-  | 'instruction_contract'
-  | 'queued'
-  | 'started'
-  | 'worker_message'
-  | 'worker_update'
-  | 'action_gate_blocked'
-  | 'worker_result'
-  | 'worker_result_invalid'
-  | 'acceptance_report'
-  | 'artifact_registered'
-  | 'prompt_sent'
-  | 'completed'
-  | 'failed'
-  | 'checkpoint'
-  | 'retry_scheduled'
-  | 'retry_started'
-  | 'retry_paused'
-  | 'retry_exhausted'
-  | 'resume_queued'
-  | 'resumed'
-  | 'cancel_requested'
-  | 'cancelled'
-  | 'process_recovered'
-  | 'concurrency_waiting'
-  | 'manager_notified'
-  | 'manager_notification_failed';
+export const MANAGER_TASK_EVENT_TYPES = [
+  'created',
+  'instruction_contract',
+  'trace_policy',
+  'queued',
+  'started',
+  'worker_message',
+  'worker_update',
+  'action_gate_blocked',
+  'worker_result',
+  'worker_result_invalid',
+  'acceptance_report',
+  'artifact_registered',
+  'prompt_sent',
+  'prompt_queued_as_task',
+  'completed',
+  'failed',
+  'checkpoint',
+  'retry_scheduled',
+  'retry_started',
+  'retry_paused',
+  'retry_exhausted',
+  'resume_queued',
+  'resumed',
+  'cancel_requested',
+  'cancelled',
+  'process_recovered',
+  'concurrency_waiting',
+  'manager_notified',
+  'manager_notification_failed',
+] as const;
+
+export type ManagerTaskEventType = (typeof MANAGER_TASK_EVENT_TYPES)[number];
+
+export type ManagerTaskEventPayloadMode = 'full' | 'preview';
+
+export interface ManagerTaskEventListOptions {
+  limit?: number;
+  type?: ManagerTaskEventType;
+  payload?: ManagerTaskEventPayloadMode;
+}
 
 export interface ManagerTask {
   id: string;
@@ -139,6 +152,10 @@ type EventRow = {
   payload_json: string | null;
   created_at: number;
 };
+
+const DEFAULT_EVENT_LIMIT = 200;
+const MAX_EVENT_LIMIT = 1000;
+const EVENT_PAYLOAD_PREVIEW_CHARS = 2000;
 
 export interface ManagerStoreOptions {
   dbPath?: string;
@@ -308,11 +325,20 @@ export class ManagerStore {
     return this.insertEvent(taskId, type, payload);
   }
 
-  listEvents(taskId: string): ManagerTaskEvent[] {
+  listEvents(taskId: string, options: ManagerTaskEventListOptions = {}): ManagerTaskEvent[] {
+    let sql = 'SELECT rowid, * FROM manager_task_events WHERE task_id = ?';
+    const params: Array<string | number> = [taskId];
+    if (options.type) {
+      sql += ' AND type = ?';
+      params.push(options.type);
+    }
+    sql += ' ORDER BY created_at DESC, rowid DESC LIMIT ?';
+    params.push(normalizeEventLimit(options.limit));
+
     const rows = this.db
-      .prepare('SELECT * FROM manager_task_events WHERE task_id = ? ORDER BY created_at ASC, rowid ASC')
-      .all(taskId) as EventRow[];
-    return rows.map((row) => this.rowToEvent(row));
+      .prepare(`SELECT * FROM (${sql}) ORDER BY created_at ASC, rowid ASC`)
+      .all(...params) as EventRow[];
+    return rows.map((row) => this.rowToEvent(row, options.payload ?? 'full'));
   }
 
   markInterruptedTasksFailed(reason: string): number {
@@ -513,15 +539,32 @@ export class ManagerStore {
     };
   }
 
-  private rowToEvent(row: EventRow): ManagerTaskEvent {
+  private rowToEvent(row: EventRow, payloadMode: ManagerTaskEventPayloadMode): ManagerTaskEvent {
     return {
       id: row.id,
       taskId: row.task_id,
       type: row.type,
-      payload: parseJsonObject(row.payload_json),
+      payload: eventPayload(row.payload_json, payloadMode),
       createdAt: row.created_at,
     };
   }
+}
+
+function normalizeEventLimit(limit: number | undefined): number {
+  if (limit === undefined) return DEFAULT_EVENT_LIMIT;
+  return Math.min(Math.max(Math.floor(limit), 1), MAX_EVENT_LIMIT);
+}
+
+function eventPayload(value: string | null, mode: ManagerTaskEventPayloadMode): Record<string, unknown> | undefined {
+  const parsed = parseJsonObject(value);
+  if (!parsed || mode === 'full') return parsed;
+  const serialized = JSON.stringify(parsed);
+  if (serialized.length <= EVENT_PAYLOAD_PREVIEW_CHARS) return parsed;
+  return {
+    preview: serialized.slice(0, EVENT_PAYLOAD_PREVIEW_CHARS),
+    truncated: true,
+    originalLength: serialized.length,
+  };
 }
 
 function defaultDbPath(): string {

@@ -1,7 +1,7 @@
 import type * as http from 'node:http';
 import { WORKER_TASK_TEMPLATES, type WorkerTaskTemplate } from '../manager-worker-template.js';
 import type { ManagerScope } from '../manager-service.js';
-import type { ManagerTaskStatus } from '../manager-store.js';
+import { MANAGER_TASK_EVENT_TYPES, type ManagerTaskEventPayloadMode, type ManagerTaskEventType, type ManagerTaskStatus } from '../manager-store.js';
 import { runManagerToolSafely } from '../manager-tools.js';
 import type { RouteContext } from './types.js';
 import { jsonResponse, parseJsonBody } from './helpers.js';
@@ -89,7 +89,12 @@ export async function handleManagerRoutes(
     if (method === 'GET' && eventsMatch) {
       const scope = scopeFromSearch(parsedUrl);
       const taskId = decodeURIComponent(eventsMatch[1]);
-      const details = service.getTask(scope, taskId, { includeEvents: true });
+      const details = service.getTask(scope, taskId, {
+        includeEvents: true,
+        eventLimit: optionalSearchNumber(parsedUrl, 'limit'),
+        eventType: optionalEventType(parsedUrl.searchParams.get('type')),
+        eventPayload: optionalEventPayload(parsedUrl.searchParams.get('payload')) ?? 'preview',
+      });
       if (!details) {
         jsonResponse(res, 404, { error: `Manager task not found: ${taskId}` });
         return true;
@@ -103,7 +108,12 @@ export async function handleManagerRoutes(
       const scope = scopeFromSearch(parsedUrl);
       const taskId = decodeURIComponent(taskMatch[1]);
       const includeEvents = parsedUrl.searchParams.get('includeEvents') === 'true';
-      const details = service.getTask(scope, taskId, { includeEvents });
+      const details = service.getTask(scope, taskId, {
+        includeEvents,
+        eventLimit: optionalSearchNumber(parsedUrl, 'eventLimit'),
+        eventType: optionalEventType(parsedUrl.searchParams.get('eventType')),
+        eventPayload: optionalEventPayload(parsedUrl.searchParams.get('eventPayload')) ?? 'preview',
+      });
       if (!details) {
         jsonResponse(res, 404, { error: `Manager task not found: ${taskId}` });
         return true;
@@ -262,6 +272,20 @@ function optionalStatus(value: string | null): ManagerTaskStatus | undefined {
     throw Object.assign(new Error(`Invalid task status: ${value}`), { statusCode: 400 });
   }
   return value as ManagerTaskStatus;
+}
+
+function optionalEventType(value: string | null): ManagerTaskEventType | undefined {
+  if (!value) return undefined;
+  if (!(MANAGER_TASK_EVENT_TYPES as readonly string[]).includes(value)) {
+    throw Object.assign(new Error(`Invalid manager event type: ${value}`), { statusCode: 400 });
+  }
+  return value as ManagerTaskEventType;
+}
+
+function optionalEventPayload(value: string | null): ManagerTaskEventPayloadMode | undefined {
+  if (!value) return undefined;
+  if (value === 'full' || value === 'preview') return value;
+  throw Object.assign(new Error(`Invalid event payload mode: ${value}`), { statusCode: 400 });
 }
 
 function optionalSideEffectClass(value: unknown): 'none' | 'readOnly' | 'externalWrite' | undefined {

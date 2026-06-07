@@ -11,7 +11,7 @@ import type { BotRegistry, RegisteredBot } from '../src/api/bot-registry.js';
 import { ManagerService, buildWorkerChatId, type ManagerScope, type ManagerServiceOptions } from '../src/api/manager-service.js';
 import { ManagerStore } from '../src/api/manager-store.js';
 import type { TaskScheduler, ScheduledTask, RecurringTask, ScheduleInput, RecurringScheduleInput } from '../src/scheduler/task-scheduler.js';
-import type { BotConfigBase } from '../src/config.js';
+import type { BotConfigBase, EngineName } from '../src/config.js';
 import type { ApiTaskOptions, ApiTaskResult } from '../src/bridge/message-bridge.js';
 import type { Logger } from '../src/utils/logger.js';
 
@@ -32,9 +32,10 @@ function createTempDbPath(): { dir: string; dbPath: string } {
   return { dir, dbPath: path.join(dir, 'manager.db') };
 }
 
-function createConfig(name: string, manager?: BotConfigBase['manager']): BotConfigBase {
+function createConfig(name: string, manager?: BotConfigBase['manager'], engine?: EngineName): BotConfigBase {
   return {
     name,
+    ...(engine ? { engine } : {}),
     ...(manager ? { manager } : {}),
     description: `${name} description`,
     specialties: ['testing'],
@@ -59,11 +60,12 @@ function createBot(
     costUsd: 0.01,
     durationMs: 10,
   }),
+  engine?: EngineName,
 ): RegisteredBot {
   return {
     name,
     platform: 'feishu',
-    config: createConfig(name, manager),
+    config: createConfig(name, manager, engine),
     bridge: {
       executeApiTask,
       stopChatTask: vi.fn().mockReturnValue(true),
@@ -155,6 +157,7 @@ function deferred<T>() {
     resolve = res;
     reject = rej;
   });
+
   return { promise, resolve, reject };
 }
 
@@ -271,6 +274,7 @@ describe('ManagerService', () => {
         forbiddenActions: [],
         sideEffectClass: 'unknown',
       }),
+      tracePolicy: 'summary',
     });
     expect(executeApiTask).toHaveBeenCalledWith(expect.objectContaining({
       userId: 'manager:manager',
@@ -285,6 +289,7 @@ describe('ManagerService', () => {
     expect(callOptions.chatId).toMatch(/^manager-worker-[a-f0-9]{32}$/);
     expect(callOptions.actionGatePolicy).toMatchObject({
       forbiddenActions: [],
+      sideEffectClass: 'unknown',
       taskId: task.id,
       traceId: task.traceId,
     });
@@ -293,16 +298,18 @@ describe('ManagerService', () => {
       .toContain('manager_notified'));
     const details = managerService.getTask(scope, task.id, { includeEvents: true });
     const eventTypes = details?.events?.map((event) => event.type) ?? [];
-    expect(eventTypes.slice(0, 6)).toEqual([
+    expect(eventTypes.slice(0, 7)).toEqual([
       'created',
       'instruction_contract',
       'queued',
+      'trace_policy',
       'started',
       'worker_message',
       'checkpoint',
     ]);
     expect(eventTypes).toEqual(expect.arrayContaining([
       'worker_update',
+      'trace_policy',
       'worker_result_invalid',
       'acceptance_report',
       'completed',
@@ -378,6 +385,7 @@ describe('ManagerService', () => {
     const callOptions = executeApiTask.mock.calls[0][0];
     expect(callOptions.actionGatePolicy).toMatchObject({
       forbiddenActions: ['train', 'push'],
+      sideEffectClass: 'unknown',
       taskId: task.id,
     });
     expect(callOptions.prompt).toContain('Forbidden actions: train, push');
@@ -385,6 +393,30 @@ describe('ManagerService', () => {
       ?.find((event) => event.type === 'instruction_contract');
     expect(contractEvent?.payload).toMatchObject({
       forbiddenActions: ['train', 'push'],
+    });
+  });
+
+  it('passes read-only side effect class into the worker action gate policy', async () => {
+    const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText: 'done',
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'Review only',
+      sideEffectClass: 'readOnly',
+      waitTimeoutSeconds: 1,
+    });
+
+    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toMatchObject({
+      forbiddenActions: [],
+      sideEffectClass: 'readOnly',
+      taskId: task.id,
+      traceId: task.traceId,
     });
   });
 
@@ -443,6 +475,74 @@ describe('ManagerService', () => {
       expect.stringContaining('Summary: P0-P1 completed'),
       'green',
     );
+  });
+
+  it('summarizes high-frequency worker stream events by default', async () => {
+    const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
+      for (let index = 0; index < 5; index++) {
+        options.onRawMessage?.({ type: 'assistant', message: { content: [{ type: 'text', text: `raw ${index}` }] } } as any);
+        options.onUpdate?.({
+          status: 'running',
+          userPrompt: options.prompt,
+          responseText: `working ${index}`,
+          toolCalls: [],
+        }, `worker-msg-${index}`, false);
+      }
+      options.onUpdate?.({
+        status: 'complete',
+        userPrompt: options.prompt,
+        responseText: 'final',
+        toolCalls: [],
+      }, 'worker-msg-final', true);
+      return { success: true, responseText: 'done' };
+    });
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'stream heavily',
+      waitTimeoutSeconds: 1,
+    });
+
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events ?? [];
+    expect(events.filter((event) => event.type === 'worker_message')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'worker_update')).toHaveLength(2);
+    expect(events.find((event) => event.type === 'trace_policy')?.payload).toMatchObject({
+      policy: 'summary',
+      rawWorkerStream: 'first-event-only',
+      workerUpdates: 'first-and-final-only',
+    });
+  });
+
+  it('can retain every worker stream event when trace policy is full', async () => {
+    const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
+      for (let index = 0; index < 3; index++) {
+        options.onRawMessage?.({ type: 'assistant', message: { content: [{ type: 'text', text: `raw ${index}` }] } } as any);
+        options.onUpdate?.({
+          status: index === 2 ? 'complete' : 'running',
+          userPrompt: options.prompt,
+          responseText: `working ${index}`,
+          toolCalls: [],
+        }, `worker-msg-${index}`, index === 2);
+      }
+      return { success: true, responseText: 'done' };
+    });
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker], { tracePolicy: 'full' });
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'stream fully',
+      waitTimeoutSeconds: 1,
+    });
+
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events ?? [];
+    expect(events.filter((event) => event.type === 'worker_message')).toHaveLength(3);
+    expect(events.filter((event) => event.type === 'worker_update')).toHaveLength(3);
+    expect(task.metadata).toMatchObject({ tracePolicy: 'full' });
   });
 
   it('records action gate blocked events from worker execution', async () => {
@@ -628,6 +728,51 @@ describe('ManagerService', () => {
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
   });
 
+  it('dispatches a traceable queued task for running Codex worker sessions', async () => {
+    const workerResult = deferred<ApiTaskResult>();
+    const executeApiTask = vi.fn((_options: ApiTaskOptions) => workerResult.promise);
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask, 'codex');
+    const managerService = createService([manager, worker]);
+
+    const runningTask = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'slow work',
+      sessionKey: 'research',
+    });
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
+
+    const result = await managerService.sendWorkerPrompt(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'add this constraint',
+      sessionKey: 'research',
+    });
+
+    expect(result.mode).toBe('dispatched');
+    expect(result.task.id).not.toBe(runningTask.id);
+    expect(result.task.workerChatId).toBe(runningTask.workerChatId);
+    expect(result.task.metadata).toMatchObject({
+      relatedTaskId: runningTask.id,
+      followUpMode: 'queued_task',
+      followUpFromTaskId: runningTask.id,
+    });
+    expect(managerService.getTask(scope, runningTask.id, { includeEvents: true })?.events)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'prompt_queued_as_task',
+          payload: expect.objectContaining({
+            taskId: result.task.id,
+            queuedTaskId: result.task.id,
+            followUpMode: 'queued_task',
+          }),
+        }),
+      ]));
+    expect(worker.bridge.appendPromptToRunningTask).not.toHaveBeenCalled();
+
+    workerResult.resolve({ success: true, responseText: 'done' });
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(2));
+  });
+
   it('dispatches a new task when sendWorkerPrompt has no running worker session', async () => {
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a');
@@ -731,7 +876,7 @@ describe('ManagerService', () => {
     expect(worker.bridge.stopChatTask).toHaveBeenCalledWith(task.workerChatId);
     expect(managerService.getTask(scope, task.id)).toMatchObject({ status: 'cancelled', error: 'no longer needed' });
     expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
-      .toEqual(['created', 'instruction_contract', 'queued', 'started', 'cancel_requested', 'cancelled']);
+      .toEqual(['created', 'instruction_contract', 'queued', 'trace_policy', 'started', 'cancel_requested', 'cancelled']);
 
     workerResult.resolve({ success: true, responseText: 'late success' });
     await new Promise((resolve) => setTimeout(resolve, 0));

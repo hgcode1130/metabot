@@ -14,6 +14,7 @@
 | `METABOT_MAX_CONCURRENT_TASKS` | `10` | 全局同时执行任务上限 |
 | `METABOT_MAX_CONCURRENT_TASKS_PER_CHAT` | `2` | 每个 bot+chat 同时执行任务上限 |
 | `METABOT_MAX_BACKGROUND_WORKER_TASKS` | `4` | manager/background worker 同时执行上限 |
+| `METABOT_MANAGER_TRACE_POLICY` | `summary` | manager worker 追踪存储策略：`summary` 记录生命周期、checkpoint、首条原始事件、首条/最终更新和结构化结果；`full` 记录所有 worker 流事件 |
 | `LOG_LEVEL` | `info` | 日志级别（debug, info, warn, error） |
 
 ## Claude Code
