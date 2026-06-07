@@ -46,6 +46,18 @@ function service() {
       updatedAt: 1,
     })),
     listTasks: vi.fn(() => []),
+    listTasksForManager: vi.fn(() => [{
+      id: 'mgrtask-recent',
+      traceId: 'trace-recent',
+      managerBotName: 'manager',
+      managerChatId: 'chat-b',
+      workerBotName: 'worker-a',
+      workerChatId: 'manager-worker-def',
+      prompt: 'recent work',
+      status: 'running',
+      createdAt: 1,
+      updatedAt: 2,
+    }]),
     getTask: vi.fn(() => ({
       id: 'mgrtask-1',
       traceId: 'trace-1',
@@ -177,6 +189,26 @@ describe('manager routes', () => {
     expect(out.statusCode).toBe(200);
     expect(out.body.task.id).toBe('mgrtask-1');
     expect(out.body.events[0].type).toBe('completed');
+  });
+
+  it('lists recent manager tasks by manager bot without requiring a chat scope', async () => {
+    const svc = service();
+    const out = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req(),
+      out,
+      'GET',
+      '/api/manager/tasks/recent?managerBotName=manager&status=running&limit=20',
+    );
+    expect(out.statusCode).toBe(200);
+    expect(out.body.tasks[0].id).toBe('mgrtask-recent');
+    expect(svc.listTasksForManager).toHaveBeenCalledWith('manager', {
+      managerChatId: undefined,
+      workerBotName: undefined,
+      status: 'running',
+      limit: 20,
+    });
   });
 
   it('gets filtered task events with bounded preview options', async () => {

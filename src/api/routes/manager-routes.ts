@@ -85,6 +85,19 @@ export async function handleManagerRoutes(
       return true;
     }
 
+    if (method === 'GET' && path === '/api/manager/tasks/recent') {
+      const managerBotName = requireSearchString(parsedUrl, 'managerBotName');
+      const status = optionalStatus(parsedUrl.searchParams.get('status'));
+      const tasks = service.listTasksForManager(managerBotName, {
+        managerChatId: optionalSearchString(parsedUrl, 'managerChatId'),
+        workerBotName: optionalSearchString(parsedUrl, 'workerBotName'),
+        status,
+        limit: optionalSearchNumber(parsedUrl, 'limit'),
+      });
+      jsonResponse(res, 200, { tasks: tasks.map(taskDto) });
+      return true;
+    }
+
     const eventsMatch = path.match(/^\/api\/manager\/tasks\/([^/]+)\/events$/);
     if (method === 'GET' && eventsMatch) {
       const scope = scopeFromSearch(parsedUrl);

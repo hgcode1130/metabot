@@ -104,6 +104,10 @@ export interface ListTasksFilter {
   limit?: number;
 }
 
+export interface ListManagerTasksFilter extends ListTasksFilter {
+  managerChatId?: string;
+}
+
 export interface ManagerTaskDetails extends ManagerTask {
   events?: ManagerTaskEvent[];
 }
@@ -400,6 +404,17 @@ export class ManagerService {
     });
   }
 
+  listTasksForManager(managerBotName: string, filter: ListManagerTasksFilter = {}): ManagerTask[] {
+    this.requireManagerByName(managerBotName);
+    return this.store.listTasks({
+      managerBotName,
+      managerChatId: filter.managerChatId,
+      workerBotName: filter.workerBotName,
+      status: filter.status,
+      limit: filter.limit,
+    });
+  }
+
   cancelTask(scope: ManagerScope, taskId: string, reason = 'Cancelled by manager'): boolean {
     this.requireManager(scope);
     const task = this.store.getTask(taskId);
@@ -547,12 +562,16 @@ export class ManagerService {
   }
 
   private requireManager(scope: ManagerScope): RegisteredBot {
-    const manager = this.registry.get(scope.managerBotName);
+    return this.requireManagerByName(scope.managerBotName);
+  }
+
+  private requireManagerByName(managerBotName: string): RegisteredBot {
+    const manager = this.registry.get(managerBotName);
     if (!manager) {
-      throw new Error(`Manager bot not found: ${scope.managerBotName}`);
+      throw new Error(`Manager bot not found: ${managerBotName}`);
     }
     if (manager.config.manager?.enabled !== true) {
-      throw new Error(`Bot is not manager-enabled: ${scope.managerBotName}`);
+      throw new Error(`Bot is not manager-enabled: ${managerBotName}`);
     }
     return manager;
   }

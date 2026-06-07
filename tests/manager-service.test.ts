@@ -250,6 +250,32 @@ describe('ManagerService', () => {
     });
   });
 
+  it('lists recent tasks for a manager across chat scopes', () => {
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const workerA = createBot('worker-a');
+    const managerService = createService([manager, workerA]);
+
+    const taskA = store!.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker-a',
+      workerChatId: 'worker-chat',
+      prompt: 'from chat a',
+    });
+    const taskB = store!.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-b',
+      workerBotName: 'worker-a',
+      workerChatId: 'worker-chat',
+      prompt: 'from chat b',
+    });
+
+    expect(managerService.listTasksForManager('manager', { limit: 10 }).map((task) => task.id))
+      .toEqual(expect.arrayContaining([taskA.id, taskB.id]));
+    expect(managerService.listTasksForManager('manager', { managerChatId: 'chat-b' }))
+      .toHaveLength(1);
+  });
+
   it('requires a manager-enabled bot', () => {
     const manager = createBot('manager');
     const worker = createBot('worker-a');
