@@ -215,14 +215,14 @@ export class ManagerService {
       .listRegistered()
       .filter((bot) => bot.name !== manager.name && allowed.has(bot.name))
       .map((bot) => {
-        const recent = this.store.listTasks({
+        const baseFilter = {
           managerBotName: scope.managerBotName,
           managerChatId: scope.managerChatId,
           workerBotName: bot.name,
-          limit: 25,
-        });
-        const running = recent.find((task) => task.status === 'running');
-        const queued = recent.filter((task) => task.status === 'queued');
+        };
+        const running = this.store.listTasks({ ...baseFilter, status: 'running', limit: 1 })[0];
+        const queued = this.store.listTasks({ ...baseFilter, status: 'queued', limit: 500 });
+        const recent = this.store.listTasks({ ...baseFilter, limit: 1 })[0];
         return {
           name: bot.name,
           platform: bot.platform,
@@ -233,7 +233,7 @@ export class ManagerService {
           busy: !!running || queued.length > 0,
           runningTaskId: running?.id,
           queuedTaskCount: queued.length,
-          recentTaskId: recent[0]?.id,
+          recentTaskId: recent?.id,
         };
       });
   }

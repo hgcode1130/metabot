@@ -219,6 +219,37 @@ describe('ManagerService', () => {
     expect(deniedService.listWorkers(scope)).toEqual([]);
   });
 
+  it('detects running workers even when recent tasks are completed', () => {
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const workerA = createBot('worker-a');
+    const managerService = createService([manager, workerA]);
+
+    const running = store!.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker-a',
+      workerChatId: 'worker-chat',
+      prompt: 'long running',
+    });
+    store!.updateTask(running.id, { status: 'running', startedAt: Date.now() - 10_000 });
+    for (let i = 0; i < 30; i++) {
+      const task = store!.createTask({
+        managerBotName: 'manager',
+        managerChatId: 'chat-a',
+        workerBotName: 'worker-a',
+        workerChatId: 'worker-chat',
+        prompt: `completed ${i}`,
+      });
+      store!.updateTask(task.id, { status: 'completed', completedAt: Date.now(), durationMs: 1 });
+    }
+
+    expect(managerService.listWorkers(scope)[0]).toMatchObject({
+      status: 'running',
+      busy: true,
+      runningTaskId: running.id,
+    });
+  });
+
   it('requires a manager-enabled bot', () => {
     const manager = createBot('manager');
     const worker = createBot('worker-a');
