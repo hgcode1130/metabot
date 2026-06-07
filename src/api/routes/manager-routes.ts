@@ -5,7 +5,7 @@ import { MANAGER_TASK_EVENT_TYPES, type ManagerTaskEventPayloadMode, type Manage
 import { runManagerToolSafely } from '../manager-tools.js';
 import type { RouteContext } from './types.js';
 import { jsonResponse, parseJsonBody } from './helpers.js';
-import { detailsDto, eventDto, reminderDto, taskDto } from './manager-route-dto.js';
+import { detailsDto, eventDto, reminderDto, taskDto, taskSummaryDto } from './manager-route-dto.js';
 
 const VALID_TASK_STATUSES = new Set<ManagerTaskStatus>(['queued', 'running', 'completed', 'failed', 'cancelled']);
 
@@ -94,7 +94,7 @@ export async function handleManagerRoutes(
         status,
         limit: optionalSearchNumber(parsedUrl, 'limit'),
       });
-      jsonResponse(res, 200, { tasks: tasks.map(taskDto) });
+      jsonResponse(res, 200, { tasks: tasks.map(taskSummaryDto) });
       return true;
     }
 

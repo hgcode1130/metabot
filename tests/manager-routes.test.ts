@@ -53,10 +53,12 @@ function service() {
       managerChatId: 'chat-b',
       workerBotName: 'worker-a',
       workerChatId: 'manager-worker-def',
-      prompt: 'recent work',
+      prompt: 'x'.repeat(300),
       status: 'running',
       createdAt: 1,
       updatedAt: 2,
+      resultText: 'large result',
+      metadata: { hidden: true },
     }]),
     getTask: vi.fn(() => ({
       id: 'mgrtask-1',
@@ -203,6 +205,9 @@ describe('manager routes', () => {
     );
     expect(out.statusCode).toBe(200);
     expect(out.body.tasks[0].id).toBe('mgrtask-recent');
+    expect(out.body.tasks[0].prompt).toHaveLength(243);
+    expect(out.body.tasks[0].resultText).toBeUndefined();
+    expect(out.body.tasks[0].metadata).toBeUndefined();
     expect(svc.listTasksForManager).toHaveBeenCalledWith('manager', {
       managerChatId: undefined,
       workerBotName: undefined,

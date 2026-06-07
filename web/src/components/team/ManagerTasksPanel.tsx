@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BotStatus } from '../../store';
 import { useStore } from '../../store';
 import type { ManagerTask, ManagerTaskEvent } from '../../types';
@@ -30,35 +30,42 @@ export function ManagerTasksPanel({ bot }: Props) {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [error, setError] = useState('');
   const [eventsError, setEventsError] = useState('');
+  const activeBotRef = useRef(bot.name);
+  const activeTaskRef = useRef<string | null>(null);
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.id === selectedId) ?? tasks[0],
     [tasks, selectedId],
   );
+  const selectedTaskId = selectedTask?.id ?? null;
 
   const loadTasks = useCallback(async () => {
     if (!token || !bot.managerEnabled) return;
+    const requestBotName = bot.name;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ managerBotName: bot.name, limit: String(TASK_LIMIT) });
+      const params = new URLSearchParams({ managerBotName: requestBotName, limit: String(TASK_LIMIT) });
       const res = await fetch(`/api/manager/tasks/recent?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(await responseError(res));
       const data = await res.json() as { tasks?: ManagerTask[] };
       const nextTasks = Array.isArray(data.tasks) ? data.tasks : [];
+      if (activeBotRef.current !== requestBotName) return;
       setTasks(nextTasks);
       setSelectedId((current) => current && nextTasks.some((task) => task.id === current) ? current : nextTasks[0]?.id ?? null);
       setError('');
     } catch (err) {
+      if (activeBotRef.current !== requestBotName) return;
       setError(err instanceof Error ? err.message : 'Failed to load manager tasks');
     } finally {
-      setLoading(false);
+      if (activeBotRef.current === requestBotName) setLoading(false);
     }
   }, [bot.managerEnabled, bot.name, token]);
 
   const loadEvents = useCallback(async (task: ManagerTask, filter: EventFilter) => {
     if (!token) return;
+    const requestTaskId = task.id;
     setEventsLoading(true);
     try {
       const params = new URLSearchParams({
@@ -73,14 +80,27 @@ export function ManagerTasksPanel({ bot }: Props) {
       });
       if (!res.ok) throw new Error(await responseError(res));
       const data = await res.json() as { events?: ManagerTaskEvent[] };
+      if (activeTaskRef.current !== requestTaskId) return;
       setEvents(Array.isArray(data.events) ? data.events : []);
       setEventsError('');
     } catch (err) {
+      if (activeTaskRef.current !== requestTaskId) return;
       setEventsError(err instanceof Error ? err.message : 'Failed to load task events');
     } finally {
-      setEventsLoading(false);
+      if (activeTaskRef.current === requestTaskId) setEventsLoading(false);
     }
   }, [token]);
+
+  useEffect(() => {
+    activeBotRef.current = bot.name;
+    activeTaskRef.current = null;
+    setTasks([]);
+    setSelectedId(null);
+    setEvents([]);
+    setEventFilter('');
+    setError('');
+    setEventsError('');
+  }, [bot.name]);
 
   useEffect(() => {
     if (!bot.managerEnabled) return undefined;
@@ -90,8 +110,11 @@ export function ManagerTasksPanel({ bot }: Props) {
   }, [bot.managerEnabled, loadTasks]);
 
   useEffect(() => {
+    activeTaskRef.current = selectedTaskId;
+    setEvents([]);
+    setEventsError('');
     if (selectedTask) void loadEvents(selectedTask, eventFilter);
-  }, [eventFilter, loadEvents, selectedTask]);
+  }, [eventFilter, loadEvents, selectedTaskId]);
 
   if (!bot.managerEnabled) return null;
 

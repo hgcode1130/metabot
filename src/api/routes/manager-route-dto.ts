@@ -29,6 +29,31 @@ export function taskDto(task: ManagerTask) {
   };
 }
 
+export function taskSummaryDto(task: ManagerTask) {
+  return {
+    id: task.id,
+    traceId: task.traceId,
+    managerBotName: task.managerBotName,
+    managerChatId: task.managerChatId,
+    workerBotName: task.workerBotName,
+    workerChatId: task.workerChatId,
+    label: task.label,
+    prompt: truncateText(task.prompt, 240),
+    status: task.status,
+    createdAt: new Date(task.createdAt).toISOString(),
+    updatedAt: new Date(task.updatedAt).toISOString(),
+    startedAt: task.startedAt ? new Date(task.startedAt).toISOString() : undefined,
+    completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : undefined,
+    costUsd: task.costUsd,
+    durationMs: task.durationMs,
+    error: task.error ? truncateText(task.error, 300) : undefined,
+    attemptCount: task.attemptCount,
+    maxAttempts: task.maxAttempts,
+    lastCheckpointAt: task.lastCheckpointAt ? new Date(task.lastCheckpointAt).toISOString() : undefined,
+    lastRetryReason: task.lastRetryReason ? truncateText(task.lastRetryReason, 200) : undefined,
+  };
+}
+
 export function eventDto(event: ManagerTaskEvent) {
   return {
     id: event.id,
@@ -37,6 +62,10 @@ export function eventDto(event: ManagerTaskEvent) {
     payload: event.payload,
     createdAt: new Date(event.createdAt).toISOString(),
   };
+}
+
+function truncateText(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
 }
 
 export function detailsDto(details: ManagerTaskDetails) {
