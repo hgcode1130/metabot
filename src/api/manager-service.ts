@@ -731,7 +731,6 @@ export class ManagerService {
       (payload) => this.appendCheckpoint(task.id, payload),
       { attempt, workerChatId: task.workerChatId },
     );
-    const contract = instructionContractForTask(task);
     const traceRecorder = new ManagerTraceRecorder(tracePolicyForTask(task, this.tracePolicy));
 
     try {
@@ -742,20 +741,6 @@ export class ManagerService {
         sendCards,
         executionSource: 'manager-worker',
         backgroundWorker: true,
-        actionGatePolicy: {
-          forbiddenActions: contract.forbiddenActions,
-          sideEffectClass: contract.sideEffectClass,
-          taskId: task.id,
-          traceId: task.traceId,
-        },
-        onActionGateBlocked: (decision) => {
-          this.store.appendEvent(task.id, 'action_gate_blocked', {
-            action: decision.action,
-            command: decision.command,
-            reason: decision.reason,
-            traceId: task.traceId,
-          });
-        },
         onRawMessage: (message) => {
           if (traceRecorder.shouldRecordWorkerMessage()) {
             this.store.appendEvent(task.id, 'worker_message', { message });

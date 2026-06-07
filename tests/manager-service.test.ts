@@ -344,12 +344,7 @@ describe('ManagerService', () => {
     expect(callOptions.prompt).toContain('## Instruction Contract');
     expect(callOptions.prompt).toContain('Do worker work');
     expect(callOptions.chatId).toMatch(/^manager-worker-[a-f0-9]{32}$/);
-    expect(callOptions.actionGatePolicy).toMatchObject({
-      forbiddenActions: [],
-      sideEffectClass: 'unknown',
-      taskId: task.id,
-      traceId: task.traceId,
-    });
+    expect(callOptions.actionGatePolicy).toBeUndefined();
 
     await waitFor(() => expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('manager_notified'));
@@ -424,7 +419,7 @@ describe('ManagerService', () => {
     expect(callOptions.prompt).toContain('Review the implementation diff');
   });
 
-  it('derives forbidden actions from manager instructions and passes them to worker execution', async () => {
+  it('keeps forbidden actions in the instruction contract without installing a hard action gate', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
       responseText: 'done',
@@ -440,11 +435,7 @@ describe('ManagerService', () => {
     });
 
     const callOptions = executeApiTask.mock.calls[0][0];
-    expect(callOptions.actionGatePolicy).toMatchObject({
-      forbiddenActions: ['train', 'push'],
-      sideEffectClass: 'unknown',
-      taskId: task.id,
-    });
+    expect(callOptions.actionGatePolicy).toBeUndefined();
     expect(callOptions.prompt).toContain('Forbidden actions: train, push');
     const contractEvent = managerService.getTask(scope, task.id, { includeEvents: true })?.events
       ?.find((event) => event.type === 'instruction_contract');
@@ -453,7 +444,7 @@ describe('ManagerService', () => {
     });
   });
 
-  it('passes read-only side effect class into the worker action gate policy', async () => {
+  it('records read-only side effect class without installing a hard action gate', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
       responseText: 'done',
@@ -469,11 +460,10 @@ describe('ManagerService', () => {
       waitTimeoutSeconds: 1,
     });
 
-    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toMatchObject({
-      forbiddenActions: [],
+    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toBeUndefined();
+    expect(task.metadata?.sideEffectClass).toBe('readOnly');
+    expect(task.metadata?.instructionContract).toMatchObject({
       sideEffectClass: 'readOnly',
-      taskId: task.id,
-      traceId: task.traceId,
     });
   });
 
@@ -602,14 +592,9 @@ describe('ManagerService', () => {
     expect(task.metadata).toMatchObject({ tracePolicy: 'full' });
   });
 
-  it('records action gate blocked events from worker execution', async () => {
+  it('does not let forbidden action words fail manager worker execution', async () => {
     const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
-      options.onActionGateBlocked?.({
-        allowed: false,
-        action: 'train',
-        command: 'npm run train',
-        reason: 'Action blocked by instruction contract: train',
-      });
+      expect(options.actionGatePolicy).toBeUndefined();
       return { success: true, responseText: 'done' };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
@@ -622,14 +607,9 @@ describe('ManagerService', () => {
       waitTimeoutSeconds: 1,
     });
 
-    const blocked = managerService.getTask(scope, task.id, { includeEvents: true })?.events
-      ?.find((event) => event.type === 'action_gate_blocked');
-    expect(blocked?.payload).toMatchObject({
-      action: 'train',
-      command: 'npm run train',
-      reason: 'Action blocked by instruction contract: train',
-      traceId: task.traceId,
-    });
+    expect(managerService.getTask(scope, task.id)?.status).toBe('completed');
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events ?? [];
+    expect(events.some((event) => event.type === 'action_gate_blocked')).toBe(false);
   });
 
   it('returns queued tasks quickly by default while worker execution continues asynchronously', async () => {
