@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildCodexArgs, resolveCodexModelMetadata } from '../src/engines/codex/executor.js';
+import { buildCodexManagerMcpConfigArgs } from '../src/engines/codex/manager-mcp-config.js';
+import { buildCodexPromptWithContext } from '../src/engines/codex/prompt-context.js';
 import type { CodexBotConfig } from '../src/config.js';
 
 describe('buildCodexArgs', () => {
@@ -12,10 +14,18 @@ describe('buildCodexArgs', () => {
   it('defaults approval policy to "never" and sandbox to "danger-full-access"', () => {
     const args = buildCodexArgs({}, cwd, prompt, undefined, undefined);
     expect(args).toEqual([
-      '-a', 'never',
-      '--sandbox', 'danger-full-access',
-      '-C', cwd,
-      'exec', '--json', '--color', 'never', '--skip-git-repo-check', prompt,
+      '-a',
+      'never',
+      '--sandbox',
+      'danger-full-access',
+      '-C',
+      cwd,
+      'exec',
+      '--json',
+      '--color',
+      'never',
+      '--skip-git-repo-check',
+      prompt,
     ]);
   });
 
@@ -53,6 +63,13 @@ describe('buildCodexArgs', () => {
     expect(args.slice(execIdx - 3, execIdx)).toEqual(['--foo', 'bar baz', '--qux']);
   });
 
+  it('injects config overrides before the exec subcommand', () => {
+    const cfgArgs = ['-c', 'mcp_servers.metabot-manager.command="node"'];
+    const args = buildCodexArgs({}, cwd, prompt, undefined, undefined, cfgArgs);
+    const execIdx = args.indexOf('exec');
+    expect(args.slice(execIdx - 2, execIdx)).toEqual(cfgArgs);
+  });
+
   it('uses `exec resume <sessionId>` when a session id is provided', () => {
     const args = buildCodexArgs({}, cwd, prompt, 'sess-abc', undefined);
     const tail = args.slice(args.indexOf('exec'));
@@ -80,12 +97,15 @@ describe('buildCodexArgs', () => {
     try {
       process.env.CODEX_HOME = dir;
       writeFileSync(join(dir, 'config.toml'), 'model = "gpt-test"\n');
-      writeFileSync(join(dir, 'models_cache.json'), JSON.stringify({
-        models: [
-          { slug: 'gpt-test', context_window: 123456 },
-          { slug: 'gpt-other', context_window: 999 },
-        ],
-      }));
+      writeFileSync(
+        join(dir, 'models_cache.json'),
+        JSON.stringify({
+          models: [
+            { slug: 'gpt-test', context_window: 123456 },
+            { slug: 'gpt-other', context_window: 999 },
+          ],
+        }),
+      );
 
       expect(resolveCodexModelMetadata({})).toEqual({
         model: 'gpt-test',
@@ -96,5 +116,37 @@ describe('buildCodexArgs', () => {
       else process.env.CODEX_HOME = priorCodexHome;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('builds per-turn manager MCP config overrides for Codex', () => {
+    const priorPort = process.env.METABOT_API_PORT;
+    process.env.METABOT_API_PORT = '9191';
+    try {
+      const args = buildCodexManagerMcpConfigArgs({
+        botName: 'manager',
+        chatId: 'chat-a',
+        managerToolsEnabled: true,
+      });
+      expect(args).toContain('-c');
+      expect(args.join('\n')).toContain('experimental_use_rmcp_client=true');
+      expect(args.join('\n')).toContain('mcp_servers.metabot-manager.command=');
+      expect(args.join('\n')).toContain('mcp_servers.metabot-manager.args=');
+      expect(args.join('\n')).toContain('METABOT_MANAGER_BOT_NAME="manager"');
+      expect(args.join('\n')).toContain('METABOT_MANAGER_CHAT_ID="chat-a"');
+      expect(args.join('\n')).toContain('METABOT_MANAGER_API_BASE_URL="http://127.0.0.1:9191"');
+    } finally {
+      if (priorPort === undefined) delete process.env.METABOT_API_PORT;
+      else process.env.METABOT_API_PORT = priorPort;
+    }
+  });
+
+  it('adds manager-worker guidance to Codex prompts when manager tools are enabled', () => {
+    const fullPrompt = buildCodexPromptWithContext({
+      prompt,
+      apiContext: { botName: 'manager', chatId: 'chat-a', managerToolsEnabled: true },
+    });
+    expect(fullPrompt).toContain('Manager / Worker Tools');
+    expect(fullPrompt).toContain('metabot-manager MCP tools');
+    expect(fullPrompt).toContain('get_worker_task');
   });
 });

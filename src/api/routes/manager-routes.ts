@@ -1,9 +1,11 @@
 import type * as http from 'node:http';
 import { WORKER_TASK_TEMPLATES, type WorkerTaskTemplate } from '../manager-worker-template.js';
-import type { ManagerScope, ManagerTaskDetails, ManagerReminder } from '../manager-service.js';
-import type { ManagerTask, ManagerTaskEvent, ManagerTaskStatus } from '../manager-store.js';
+import type { ManagerScope } from '../manager-service.js';
+import type { ManagerTaskStatus } from '../manager-store.js';
+import { runManagerToolSafely } from '../manager-tools.js';
 import type { RouteContext } from './types.js';
 import { jsonResponse, parseJsonBody } from './helpers.js';
+import { detailsDto, eventDto, reminderDto, taskDto } from './manager-route-dto.js';
 
 const VALID_TASK_STATUSES = new Set<ManagerTaskStatus>(['queued', 'running', 'completed', 'failed', 'cancelled']);
 
@@ -26,6 +28,20 @@ export async function handleManagerRoutes(
   const path = parsedUrl.pathname;
 
   try {
+    const toolMatch = path.match(/^\/api\/manager\/tools\/([^/]+)$/);
+    if (method === 'POST' && toolMatch) {
+      const body = await parseJsonBody(req);
+      const result = await runManagerToolSafely({
+        service,
+        logger: ctx.logger,
+        scope: scopeFromBody(body),
+        name: decodeURIComponent(toolMatch[1]),
+        args: optionalObject(body.args) ?? {},
+      });
+      jsonResponse(res, result.isError ? 400 : 200, result.payload);
+      return true;
+    }
+
     if (method === 'GET' && path === '/api/manager/workers') {
       const scope = scopeFromSearch(parsedUrl);
       jsonResponse(res, 200, { workers: service.listWorkers(scope) });
@@ -45,6 +61,10 @@ export async function handleManagerRoutes(
         taskTemplate: optionalTaskTemplate(body.taskTemplate),
         relatedTaskId: optionalString(body.relatedTaskId),
         workflowId: optionalString(body.workflowId),
+        sideEffectClass: optionalSideEffectClass(body.sideEffectClass),
+        idempotencyKey: optionalString(body.idempotencyKey),
+        forbiddenActions: optionalStringArray(body.forbiddenActions),
+        acceptanceCriteria: optionalStringArray(body.acceptanceCriteria),
         sendCards: optionalBoolean(body.sendCards),
         waitTimeoutSeconds: optionalNumber(body.waitTimeoutSeconds),
         metadata: optionalObject(body.metadata),
@@ -98,7 +118,11 @@ export async function handleManagerRoutes(
       const scope = scopeFromBody(body);
       const taskId = decodeURIComponent(cancelTaskMatch[1]);
       const cancelled = service.cancelTask(scope, taskId, optionalString(body.reason) ?? 'Cancelled via manager API');
-      jsonResponse(res, cancelled ? 200 : 404, cancelled ? { id: taskId, status: 'cancelled' } : { error: `Manager task not cancellable: ${taskId}` });
+      jsonResponse(
+        res,
+        cancelled ? 200 : 404,
+        cancelled ? { id: taskId, status: 'cancelled' } : { error: `Manager task not cancellable: ${taskId}` },
+      );
       return true;
     }
 
@@ -123,6 +147,8 @@ export async function handleManagerRoutes(
         label: optionalString(body.label),
         sendCards: optionalBoolean(body.sendCards),
         traceId: optionalString(body.traceId),
+        sideEffectClass: optionalSideEffectClass(body.sideEffectClass),
+        idempotencyKey: optionalString(body.idempotencyKey),
       });
       jsonResponse(res, 201, { reminder: reminderDto(reminder) });
       return true;
@@ -139,7 +165,13 @@ export async function handleManagerRoutes(
       const scope = scopeFromSearch(parsedUrl);
       const reminderId = decodeURIComponent(reminderMatch[1]);
       const cancelled = service.cancelReminder(scope, reminderId);
-      jsonResponse(res, cancelled ? 200 : 404, cancelled ? { id: reminderId, status: 'cancelled' } : { error: `Manager reminder not found or not cancellable: ${reminderId}` });
+      jsonResponse(
+        res,
+        cancelled ? 200 : 404,
+        cancelled
+          ? { id: reminderId, status: 'cancelled' }
+          : { error: `Manager reminder not found or not cancellable: ${reminderId}` },
+      );
       return true;
     }
   } catch (err: any) {
@@ -215,9 +247,13 @@ function optionalTaskTemplate(value: unknown): WorkerTaskTemplate | undefined {
 }
 
 function optionalObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw Object.assign(new Error('Expected an array of strings'), { statusCode: 400 });
+  return value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean);
 }
 
 function optionalStatus(value: string | null): ManagerTaskStatus | undefined {
@@ -228,63 +264,7 @@ function optionalStatus(value: string | null): ManagerTaskStatus | undefined {
   return value as ManagerTaskStatus;
 }
 
-function taskDto(task: ManagerTask) {
-  return {
-    id: task.id,
-    traceId: task.traceId,
-    managerBotName: task.managerBotName,
-    managerChatId: task.managerChatId,
-    workerBotName: task.workerBotName,
-    workerChatId: task.workerChatId,
-    label: task.label,
-    prompt: task.prompt,
-    status: task.status,
-    createdAt: new Date(task.createdAt).toISOString(),
-    updatedAt: new Date(task.updatedAt).toISOString(),
-    startedAt: task.startedAt ? new Date(task.startedAt).toISOString() : undefined,
-    completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : undefined,
-    costUsd: task.costUsd,
-    durationMs: task.durationMs,
-    resultText: task.resultText,
-    error: task.error,
-    attemptCount: task.attemptCount,
-    maxAttempts: task.maxAttempts,
-    nextAttemptAt: task.nextAttemptAt ? new Date(task.nextAttemptAt).toISOString() : undefined,
-    lastCheckpointAt: task.lastCheckpointAt ? new Date(task.lastCheckpointAt).toISOString() : undefined,
-    lastRetryReason: task.lastRetryReason,
-    metadata: task.metadata,
-  };
-}
-
-function eventDto(event: ManagerTaskEvent) {
-  return {
-    id: event.id,
-    taskId: event.taskId,
-    type: event.type,
-    payload: event.payload,
-    createdAt: new Date(event.createdAt).toISOString(),
-  };
-}
-
-function detailsDto(details: ManagerTaskDetails) {
-  return {
-    task: taskDto(details),
-    ...(details.events ? { events: details.events.map(eventDto) } : {}),
-  };
-}
-
-function reminderDto(reminder: ManagerReminder) {
-  if (reminder.type === 'one-time') {
-    return {
-      ...reminder,
-      executeAt: new Date(reminder.executeAt).toISOString(),
-      createdAt: new Date(reminder.createdAt).toISOString(),
-    };
-  }
-  return {
-    ...reminder,
-    nextExecuteAt: new Date(reminder.nextExecuteAt).toISOString(),
-    lastExecutedAt: reminder.lastExecutedAt ? new Date(reminder.lastExecutedAt).toISOString() : undefined,
-    createdAt: new Date(reminder.createdAt).toISOString(),
-  };
+function optionalSideEffectClass(value: unknown): 'none' | 'readOnly' | 'externalWrite' | undefined {
+  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  return undefined;
 }
