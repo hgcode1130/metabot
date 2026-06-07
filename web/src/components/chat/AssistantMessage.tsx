@@ -4,7 +4,7 @@ import { useState, useCallback, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { CardState, ChatMessage, FileAttachment, ToolCall } from '../../types';
+import type { CardState, ChatMessage, FileAttachment, ProgressUpdate, ToolCall } from '../../types';
 import { IconCheck, IconChevronDown, IconXCircle, IconTool } from './icons';
 import { FileAttachmentCard } from './FileAttachmentCard';
 import { CodeBlock } from './CodeBlock';
@@ -45,6 +45,33 @@ function ToolCallsSection({ toolCalls }: { toolCalls: ToolCall[] }) {
               </span>
               <span className={styles.toolCallName}>{tool.name}</span>
               <span className={styles.toolCallDetail}>{tool.detail}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProgressUpdatesSection({ updates }: { updates?: ProgressUpdate[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!updates || updates.length === 0) return null;
+
+  return (
+    <div className={styles.toolCalls}>
+      <div className={styles.toolCallsHeader} onClick={() => setExpanded(!expanded)}>
+        <span className={styles.toolCallIcon}>↪</span>
+        <span>{`Progress updates (${updates.length})`}</span>
+        <span className={`${styles.toolCallsChevron} ${expanded ? styles.toolCallsChevronOpen : ''}`}>
+          <IconChevronDown />
+        </span>
+      </div>
+      {expanded && (
+        <div className={styles.toolCallsList}>
+          {updates.map((update, i) => (
+            <div key={`${update.timestamp ?? i}-${i}`} className={styles.toolCallItem}>
+              <span className={styles.toolCallIcon}>•</span>
+              <span className={styles.toolCallDetail}>{update.text}</span>
             </div>
           ))}
         </div>
@@ -230,6 +257,7 @@ export function AssistantMessageView({ msg, onAnswer, onPreview }: AssistantMess
         </div>
       )}
       <ToolCallsSection toolCalls={state.toolCalls} />
+      <ProgressUpdatesSection updates={state.progressUpdates} />
       {state.responseText && (
         <div className={styles.responseContent}>
           <ReactMarkdown

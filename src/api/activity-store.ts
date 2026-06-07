@@ -8,6 +8,7 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { Logger } from '../utils/logger.js';
+import type { TaskErrorCode, TaskErrorKind } from '../utils/retry-policy.js';
 
 export interface ActivityEvent {
   id: string;
@@ -20,6 +21,10 @@ export interface ActivityEvent {
   costUsd?: number;
   durationMs?: number;
   errorMessage?: string;
+  errorCode?: TaskErrorCode;
+  errorKind?: TaskErrorKind;
+  retryable?: boolean;
+  providerStatus?: number;
   timestamp: number;
 }
 
@@ -60,10 +65,18 @@ export class ActivityStore {
         cost_usd REAL,
         duration_ms REAL,
         error_message TEXT,
+        error_code TEXT,
+        error_kind TEXT,
+        retryable INTEGER,
+        provider_status INTEGER,
         timestamp INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_events(timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_activity_bot_name ON activity_events(bot_name, timestamp DESC);
+    `);
+    this.addMissingColumns();
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_activity_error_code ON activity_events(error_code, timestamp DESC);
     `);
   }
 
@@ -73,14 +86,20 @@ export class ActivityStore {
     const full: ActivityEvent = { id, ...event };
 
     this.db.prepare(`
-      INSERT INTO activity_events (id, type, bot_name, chat_id, user_id, prompt, response_preview, cost_usd, duration_ms, error_message, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO activity_events (
+        id, type, bot_name, chat_id, user_id, prompt, response_preview,
+        cost_usd, duration_ms, error_message, error_code, error_kind,
+        retryable, provider_status, timestamp
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, event.type, event.botName, event.chatId,
       event.userId || null, event.prompt?.slice(0, 200) || null,
       event.responsePreview?.slice(0, 200) || null,
-      event.costUsd || null, event.durationMs || null,
-      event.errorMessage?.slice(0, 500) || null, event.timestamp,
+      event.costUsd || null, event.durationMs || null, event.errorMessage?.slice(0, 500) || null,
+      event.errorCode || null, event.errorKind || null,
+      event.retryable === undefined ? null : Number(event.retryable),
+      event.providerStatus || null, event.timestamp,
     );
 
     // Add to ring buffer
@@ -144,7 +163,32 @@ export class ActivityStore {
       costUsd: row.cost_usd || undefined,
       durationMs: row.duration_ms || undefined,
       errorMessage: row.error_message || undefined,
+      errorCode: row.error_code || undefined,
+      errorKind: row.error_kind || undefined,
+      retryable: row.retryable == null ? undefined : Boolean(row.retryable),
+      providerStatus: row.provider_status || undefined,
       timestamp: row.timestamp,
     };
+  }
+
+  private addMissingColumns(): void {
+    const columns = new Set(this.tableColumns('activity_events'));
+    const specs = [
+      ['error_code', 'TEXT'],
+      ['error_kind', 'TEXT'],
+      ['retryable', 'INTEGER'],
+      ['provider_status', 'INTEGER'],
+    ];
+    for (const [name, spec] of specs) {
+      if (!columns.has(name)) this.db.exec(`ALTER TABLE activity_events ADD COLUMN ${name} ${spec}`);
+    }
+  }
+
+  private tableColumns(table: string): string[] {
+    const result = this.db.pragma(`table_info(${table})`) as unknown;
+    if (!Array.isArray(result)) return [];
+    return result
+      .map((row) => (row as { name?: unknown }).name)
+      .filter((name): name is string => typeof name === 'string');
   }
 }

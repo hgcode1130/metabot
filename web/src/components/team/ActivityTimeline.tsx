@@ -40,6 +40,11 @@ function EventIcon({ type }: { type: ActivityEvent['type'] }) {
   );
 }
 
+function errorLabel(event: ActivityEvent): string | undefined {
+  if (event.errorCode) return event.errorCode;
+  return event.errorMessage?.slice(0, 60);
+}
+
 interface Props {
   events: ActivityEvent[];
   botFilter?: string;
@@ -80,10 +85,13 @@ export function ActivityTimeline({ events, botFilter }: Props) {
               {event.durationMs != null && (
                 <span className={s.metaItem}>{formatDuration(event.durationMs)}</span>
               )}
-              {event.errorMessage && (
+              {errorLabel(event) && (
                 <span className={`${s.metaItem} ${s.errorMsg}`}>
-                  {event.errorMessage.slice(0, 60)}
+                  {errorLabel(event)}
                 </span>
+              )}
+              {event.providerStatus != null && (
+                <span className={s.metaItem}>HTTP {event.providerStatus}</span>
               )}
             </div>
           </div>

@@ -378,4 +378,71 @@ describe('TaskScheduler - Recurring Tasks', () => {
     expect(scheduler.listTasks()).toHaveLength(0);
     scheduler.destroy();
   });
+
+  it('pauses gateway-timeout retry when side-effect safety is unknown', async () => {
+    const executeApiTask = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'API Error: 524 origin_response_timeout' });
+    const scheduler = new TaskScheduler(createMockRegistry(true, false, executeApiTask), createMockLogger());
+    scheduler.scheduleTask({
+      botName: 'testbot',
+      chatId: 'chat1',
+      prompt: 'Do work',
+      delaySeconds: 0,
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(executeApiTask).toHaveBeenCalledTimes(1);
+    expect(scheduler.listTasks()).toHaveLength(0);
+    scheduler.destroy();
+  });
+
+  it('retries gateway-timeout failures when task metadata declares read-only work', async () => {
+    const executeApiTask = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: 'API Error: 524 origin_response_timeout' })
+      .mockResolvedValueOnce({ success: true });
+    const scheduler = new TaskScheduler(createMockRegistry(true, false, executeApiTask), createMockLogger());
+    const task = scheduler.scheduleTask({
+      botName: 'testbot',
+      chatId: 'chat1',
+      prompt: 'Do work',
+      delaySeconds: 0,
+      metadata: { sideEffectClass: 'readOnly' },
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(scheduler.listTasks()[0]).toMatchObject({ id: task.id, retryCount: 1 });
+    await vi.advanceTimersByTimeAsync(600_000);
+
+    expect(executeApiTask).toHaveBeenCalledTimes(2);
+    expect(scheduler.listTasks()).toHaveLength(0);
+    scheduler.destroy();
+  });
+
+  it('pauses recurring tasks and marks compensation when provider auth fails', async () => {
+    const executeApiTask = vi.fn()
+      .mockResolvedValueOnce({ success: false, error: '503 auth_not_found providers=codex' });
+    const scheduler = new TaskScheduler(createMockRegistry(true, false, executeApiTask), createMockLogger());
+    let callCount = 0;
+    mockNextCron.mockImplementation(() => {
+      callCount++;
+      return callCount === 1 ? Date.now() + 100 : Date.now() + 60_000;
+    });
+    const recurring = scheduler.scheduleRecurring({
+      botName: 'testbot',
+      chatId: 'chat1',
+      prompt: 'Daily report',
+      cronExpr: '* * * * *',
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(executeApiTask).toHaveBeenCalledTimes(1);
+    expect(scheduler.getRecurringTask(recurring.id)).toMatchObject({
+      status: 'paused',
+      needsCompensation: true,
+      compensationReason: '503 auth_not_found providers=codex',
+    });
+    scheduler.destroy();
+  });
 });

@@ -2,6 +2,7 @@
 export type {
   CardStatus,
   ToolCall,
+  ProgressUpdate,
   PendingQuestion,
   CardState,
   BackgroundEvent,
@@ -127,6 +128,15 @@ export function buildCard(state: CardState): string {
     elements.push({
       tag: 'markdown',
       content: '📡 **Background**\n' + lines.join('\n'),
+    });
+    elements.push({ tag: 'hr' });
+  }
+
+  if (state.progressUpdates && state.progressUpdates.length > 0) {
+    const latest = state.progressUpdates[state.progressUpdates.length - 1];
+    elements.push({
+      tag: 'markdown',
+      content: `▸ **Progress updates (${state.progressUpdates.length})**\nLatest: _${truncate(latest.text, 220)}_`,
     });
     elements.push({ tag: 'hr' });
   }

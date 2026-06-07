@@ -1,5 +1,8 @@
 // Shared types used across IM platforms (Feishu, Telegram, etc.)
 
+import type { ProgressUpdate } from './utils/progress-updates.js';
+export type { ProgressUpdate } from './utils/progress-updates.js';
+
 export type CardStatus =
   | 'thinking'
   | 'running'
@@ -72,6 +75,8 @@ export interface CardState {
   userPrompt: string;
   responseText: string;
   toolCalls: ToolCall[];
+  /** Routine progress/status updates kept out of the main response body. */
+  progressUpdates?: ProgressUpdate[];
   costUsd?: number;
   durationMs?: number;
   errorMessage?: string;

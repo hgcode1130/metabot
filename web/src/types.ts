@@ -20,6 +20,12 @@ export interface ToolCall {
   status: 'running' | 'done';
 }
 
+export interface ProgressUpdate {
+  text: string;
+  timestamp?: number;
+  source?: 'assistant' | 'agent_activity';
+}
+
 export interface PendingQuestion {
   toolUseId: string;
   questions: Array<{
@@ -57,6 +63,8 @@ export interface CardState {
   userPrompt: string;
   responseText: string;
   toolCalls: ToolCall[];
+  /** Routine progress/status updates kept out of the main response body. */
+  progressUpdates?: ProgressUpdate[];
   costUsd?: number;
   durationMs?: number;
   errorMessage?: string;
@@ -167,6 +175,10 @@ export interface ActivityEvent {
   costUsd?: number;
   durationMs?: number;
   errorMessage?: string;
+  errorCode?: string;
+  errorKind?: string;
+  retryable?: boolean;
+  providerStatus?: number;
   timestamp: number;
 }
 

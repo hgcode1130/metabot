@@ -19,6 +19,7 @@ import { startMemoryServer } from './memory/memory-server.js';
 import { DocSync } from './sync/doc-sync.js';
 import { MemoryClient } from './memory/memory-client.js';
 import { ManagerService } from './api/manager-service.js';
+import { CircuitBreaker } from './api/circuit-breaker.js';
 import { configureDefaultTaskExecutionQueue } from './utils/task-execution-queue.js';
 
 import { SessionRegistry } from './session/session-registry.js';
@@ -237,8 +238,9 @@ async function main() {
   logger.info({ bots: allNames }, 'All bots started');
 
   // Create task scheduler and manager control-plane service
-  const scheduler = new TaskScheduler(registry, logger);
-  const managerService = new ManagerService(registry, scheduler, logger);
+  const circuitBreaker = new CircuitBreaker(logger);
+  const scheduler = new TaskScheduler(registry, logger, circuitBreaker);
+  const managerService = new ManagerService(registry, scheduler, logger, { circuitBreaker });
   for (const bot of registry.listRegistered()) {
     bot.bridge.setManagerService(managerService);
   }
@@ -332,6 +334,7 @@ async function main() {
     memoryServerUrl: appConfig.memoryServerUrl,
     memoryAuthToken:
       appConfig.memory.adminToken || appConfig.memory.readerToken || appConfig.memory.secret || undefined,
+    circuitBreaker,
     sessionRegistry,
     managerService,
   });

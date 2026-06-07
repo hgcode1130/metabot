@@ -7,6 +7,12 @@ import type {
   PendingQuestion,
 } from '../../feishu/card-builder.js';
 import { selectFinalResponseText, selectUserFacingResponseText } from './taskmaster-response.js';
+import {
+  isProgressUpdateText,
+  removeProgressText,
+  toProgressUpdate,
+  type ProgressUpdate,
+} from '../../utils/progress-updates.js';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.tiff']);
 
@@ -38,6 +44,8 @@ export class StreamProcessor {
   private _totalTokens: number | undefined;
   private _contextWindow: number | undefined;
   private _apiErrorMessage: string | undefined;
+  private _progressUpdates: ProgressUpdate[] = [];
+  private _streamTextStartIndex: number | undefined;
   // Track per-API-call usage from stream events for accurate context window display
   private _lastInputTokens: number | undefined;
   private _lastOutputTokens: number | undefined;
@@ -106,6 +114,7 @@ export class StreamProcessor {
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
       pendingQuestion: this._pendingQuestions[0] || undefined,
+      progressUpdates: this._progressUpdates.length > 0 ? [...this._progressUpdates] : undefined,
       backgroundEvents: this._backgroundEvents.size > 0
         ? [...this._backgroundEvents.values()]
         : undefined,
@@ -192,7 +201,7 @@ export class StreamProcessor {
             continue;
           }
           // Full message text replaces accumulated stream text
-          this.responseText = selectUserFacingResponseText(this.responseText, block.text);
+          this.recordAssistantText(block.text);
         }
       } else if (block.type === 'tool_use' && block.name) {
         this.addToolCall(block.name, block.input);
@@ -242,6 +251,7 @@ export class StreamProcessor {
       }
       if (block?.type === 'text') {
         // Reset for new text block
+        this._streamTextStartIndex = this.responseText.length;
       }
     } else if (event.type === 'content_block_delta') {
       const delta = event.delta;
@@ -249,6 +259,7 @@ export class StreamProcessor {
         this.responseText += delta.text;
       }
     } else if (event.type === 'content_block_stop') {
+      this.finalizeStreamTextBlock();
       // Tool may be complete
       // Actual completion is tracked via assistant messages
     }
@@ -300,7 +311,9 @@ export class StreamProcessor {
     const apiErrorMessage = !isError
       ? this._apiErrorMessage ?? rawApiErrorMessage ?? getApiErrorMessage(resultText)
       : undefined;
-    const responseText = apiErrorMessage ? previousResponseText : resultText;
+    const responseText = apiErrorMessage
+      ? previousResponseText
+      : this.recordFinalResultText(previousResponseText, rawResultText, resultText);
     this.responseText = responseText;
 
     return {
@@ -316,10 +329,42 @@ export class StreamProcessor {
       model: this._model,
       totalTokens: this._totalTokens,
       contextWindow: this._contextWindow,
+      progressUpdates: this._progressUpdates.length > 0 ? [...this._progressUpdates] : undefined,
       backgroundEvents: this._backgroundEvents.size > 0
         ? [...this._backgroundEvents.values()]
         : undefined,
     };
+  }
+
+  private recordAssistantText(text: string): void {
+    const selected = selectUserFacingResponseText(this.responseText, text);
+    if (!isProgressUpdateText(text)) {
+      this.responseText = selected;
+      return;
+    }
+    this.addProgressUpdate(text);
+    this.responseText = removeProgressText(selected, text);
+  }
+
+  private recordFinalResultText(previous: string, raw: string, selected: string): string {
+    if (!isProgressUpdateText(raw)) return selected;
+    this.addProgressUpdate(raw);
+    return removeProgressText(previous, raw);
+  }
+
+  private finalizeStreamTextBlock(): void {
+    if (this._streamTextStartIndex === undefined) return;
+    const text = this.responseText.slice(this._streamTextStartIndex);
+    this._streamTextStartIndex = undefined;
+    if (!isProgressUpdateText(text)) return;
+    this.addProgressUpdate(text);
+    this.responseText = removeProgressText(this.responseText, text);
+  }
+
+  private addProgressUpdate(text: string): void {
+    const update = toProgressUpdate(text, 'assistant');
+    if (this._progressUpdates.at(-1)?.text === update.text) return;
+    this._progressUpdates.push(update);
   }
 
   private addToolCall(name: string, input: unknown): void {

@@ -267,6 +267,10 @@ describe('ManagerService', () => {
       sessionKey: 'default',
       taskTemplate: 'general',
       outputContractVersion: expect.any(String),
+      instructionContract: expect.objectContaining({
+        forbiddenActions: [],
+        sideEffectClass: 'unknown',
+      }),
     });
     expect(executeApiTask).toHaveBeenCalledWith(expect.objectContaining({
       userId: 'manager:manager',
@@ -276,21 +280,34 @@ describe('ManagerService', () => {
     expect(callOptions.prompt).toContain('You are executing a delegated MetaBot worker task.');
     expect(callOptions.prompt).toContain('Task ID:');
     expect(callOptions.prompt).toContain('Template: general');
+    expect(callOptions.prompt).toContain('## Instruction Contract');
     expect(callOptions.prompt).toContain('Do worker work');
     expect(callOptions.chatId).toMatch(/^manager-worker-[a-f0-9]{32}$/);
+    expect(callOptions.actionGatePolicy).toMatchObject({
+      forbiddenActions: [],
+      taskId: task.id,
+      traceId: task.traceId,
+    });
 
     await waitFor(() => expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('manager_notified'));
     const details = managerService.getTask(scope, task.id, { includeEvents: true });
     const eventTypes = details?.events?.map((event) => event.type) ?? [];
-    expect(eventTypes.slice(0, 5)).toEqual([
+    expect(eventTypes.slice(0, 6)).toEqual([
       'created',
+      'instruction_contract',
       'queued',
       'started',
       'worker_message',
       'checkpoint',
     ]);
-    expect(eventTypes).toEqual(expect.arrayContaining(['worker_update', 'completed', 'manager_notified']));
+    expect(eventTypes).toEqual(expect.arrayContaining([
+      'worker_update',
+      'worker_result_invalid',
+      'acceptance_report',
+      'completed',
+      'manager_notified',
+    ]));
     expect(details?.events?.find((event) => event.type === 'worker_message')?.payload)
       .toMatchObject({ message: { type: 'assistant' } });
     const update = details?.events?.find((event) => event.type === 'worker_update');
@@ -341,6 +358,121 @@ describe('ManagerService', () => {
     expect(callOptions.prompt).toContain('Workflow ID: workflow-1');
     expect(callOptions.prompt).toContain('Treat this as a read-only independent review');
     expect(callOptions.prompt).toContain('Review the implementation diff');
+  });
+
+  it('derives forbidden actions from manager instructions and passes them to worker execution', async () => {
+    const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText: 'done',
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: '完成数据构建收尾，不要启动 train，也不要 push。',
+      waitTimeoutSeconds: 1,
+    });
+
+    const callOptions = executeApiTask.mock.calls[0][0];
+    expect(callOptions.actionGatePolicy).toMatchObject({
+      forbiddenActions: ['train', 'push'],
+      taskId: task.id,
+    });
+    expect(callOptions.prompt).toContain('Forbidden actions: train, push');
+    const contractEvent = managerService.getTask(scope, task.id, { includeEvents: true })?.events
+      ?.find((event) => event.type === 'instruction_contract');
+    expect(contractEvent?.payload).toMatchObject({
+      forbiddenActions: ['train', 'push'],
+    });
+  });
+
+  it('records structured worker results, artifacts, and acceptance reports', async () => {
+    const responseText = [
+      'Implementation complete.',
+      '',
+      '```json METABOT_WORKER_RESULT',
+      '{',
+      '  "summary": "P0-P1 completed",',
+      '  "actionsTaken": ["wired manager contract"],',
+      '  "commands": ["npm test"],',
+      '  "files": ["src/api/manager-service.ts"],',
+      '  "artifacts": [{"path":"docs/report.md","type":"report","description":"trace report","sha256":"abc"}],',
+      '  "verification": [{"command":"npm test","status":"passed","details":"ok"}],',
+      '  "risks": [],',
+      '  "nextAction": "review"',
+      '}',
+      '```',
+    ].join('\n');
+    const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText,
+      costUsd: 0.1,
+      durationMs: 20,
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'Implement P0-P1',
+      acceptanceCriteria: ['focused tests pass'],
+      waitTimeoutSeconds: 1,
+    });
+
+    const details = managerService.getTask(scope, task.id, { includeEvents: true });
+    expect(details?.metadata?.workerResult).toMatchObject({ summary: 'P0-P1 completed' });
+    expect(details?.metadata?.artifactRegistry).toEqual([
+      expect.objectContaining({ path: 'docs/report.md', sha256: 'abc' }),
+    ]);
+    expect(details?.events?.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'worker_result',
+      'artifact_registered',
+      'acceptance_report',
+    ]));
+    expect(details?.events?.find((event) => event.type === 'acceptance_report')?.payload)
+      .toMatchObject({
+        status: 'worker_reported',
+        criteria: [{ criterion: 'focused tests pass', status: 'not_deterministically_verified' }],
+      });
+    expect(manager.sender.sendTextNotice).toHaveBeenCalledWith(
+      'chat-a',
+      expect.stringContaining('completed'),
+      expect.stringContaining('Summary: P0-P1 completed'),
+      'green',
+    );
+  });
+
+  it('records action gate blocked events from worker execution', async () => {
+    const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
+      options.onActionGateBlocked?.({
+        allowed: false,
+        action: 'train',
+        command: 'npm run train',
+        reason: 'Action blocked by instruction contract: train',
+      });
+      return { success: true, responseText: 'done' };
+    });
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: '完成任务，不要启动 train。',
+      waitTimeoutSeconds: 1,
+    });
+
+    const blocked = managerService.getTask(scope, task.id, { includeEvents: true })?.events
+      ?.find((event) => event.type === 'action_gate_blocked');
+    expect(blocked?.payload).toMatchObject({
+      action: 'train',
+      command: 'npm run train',
+      reason: 'Action blocked by instruction contract: train',
+      traceId: task.traceId,
+    });
   });
 
   it('returns queued tasks quickly by default while worker execution continues asynchronously', async () => {
@@ -397,6 +529,29 @@ describe('ManagerService', () => {
     expect(executeApiTask).toHaveBeenCalledTimes(6);
     const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type);
     expect(events).toEqual(expect.arrayContaining(['retry_scheduled', 'retry_exhausted', 'failed']));
+  });
+
+  it('pauses malformed-response worker retry without side-effect safety metadata', async () => {
+    const executeApiTask = vi.fn()
+      .mockResolvedValueOnce({
+        success: false,
+        responseText: 'partial',
+        error: 'API returned an empty or malformed response (HTTP 200)',
+      });
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker], { retryDelayMs: () => 0 });
+
+    const task = await managerService.dispatchTask(scope, { workerBotName: 'worker-a', prompt: 'unsafe retry' });
+
+    await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('failed'));
+    expect(executeApiTask).toHaveBeenCalledTimes(1);
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events;
+    expect(events?.map((event) => event.type)).toEqual(expect.arrayContaining(['retry_paused', 'failed']));
+    expect(events?.find((event) => event.type === 'retry_paused')?.payload).toMatchObject({
+      code: 'malformed_response_http_200',
+      sideEffectClass: 'unknown',
+    });
   });
 
   it('attaches a new prompt to a running worker session when possible', async () => {
@@ -576,7 +731,7 @@ describe('ManagerService', () => {
     expect(worker.bridge.stopChatTask).toHaveBeenCalledWith(task.workerChatId);
     expect(managerService.getTask(scope, task.id)).toMatchObject({ status: 'cancelled', error: 'no longer needed' });
     expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
-      .toEqual(['created', 'queued', 'started', 'cancel_requested', 'cancelled']);
+      .toEqual(['created', 'instruction_contract', 'queued', 'started', 'cancel_requested', 'cancelled']);
 
     workerResult.resolve({ success: true, responseText: 'late success' });
     await new Promise((resolve) => setTimeout(resolve, 0));

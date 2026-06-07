@@ -1,9 +1,11 @@
 type TaskRow = Record<string, any>;
 type EventRow = Record<string, any>;
+type ActivityRow = Record<string, any>;
 
 interface FakeDbState {
   tasks: TaskRow[];
   events: EventRow[];
+  activities: ActivityRow[];
 }
 
 const dbs = new Map<string, FakeDbState>();
@@ -14,7 +16,7 @@ export default class FakeDatabase {
   constructor(private dbPath: string) {
     let state = dbs.get(dbPath);
     if (!state) {
-      state = { tasks: [], events: [] };
+      state = { tasks: [], events: [], activities: [] };
       dbs.set(dbPath, state);
     }
     this.state = state;
@@ -90,6 +92,39 @@ export default class FakeDatabase {
       return { changes: 1 };
     }
 
+    if (sql.startsWith('INSERT INTO activity_events')) {
+      const [
+        id, type, botName, chatId, userId, prompt, responsePreview,
+        costUsd, durationMs, errorMessage, errorCode, errorKind,
+        retryable, providerStatus, timestamp,
+      ] = params;
+      this.state.activities.push({
+        id,
+        type,
+        bot_name: botName,
+        chat_id: chatId,
+        user_id: userId,
+        prompt,
+        response_preview: responsePreview,
+        cost_usd: costUsd,
+        duration_ms: durationMs,
+        error_message: errorMessage,
+        error_code: errorCode,
+        error_kind: errorKind,
+        retryable,
+        provider_status: providerStatus,
+        timestamp,
+      });
+      return { changes: 1 };
+    }
+
+    if (sql.startsWith('DELETE FROM activity_events')) {
+      const cutoff = params[0];
+      const before = this.state.activities.length;
+      this.state.activities = this.state.activities.filter((row) => row.timestamp >= cutoff);
+      return { changes: before - this.state.activities.length };
+    }
+
     if (sql.includes("SET status = 'failed'")) {
       const [updatedAt, completedAt, error, retryReasonOrId, maybeId] = params;
       const id = maybeId ?? retryReasonOrId;
@@ -155,6 +190,21 @@ export default class FakeDatabase {
       return this.state.events
         .filter((event) => event.task_id === params[0])
         .sort((a, b) => a.created_at - b.created_at);
+    }
+
+    if (sql.startsWith('SELECT * FROM activity_events')) {
+      let idx = 0;
+      let rows = [...this.state.activities];
+      if (sql.includes('bot_name = ?')) {
+        const value = params[idx++];
+        rows = rows.filter((row) => row.bot_name === value);
+      }
+      if (sql.includes('timestamp > ?')) {
+        const value = params[idx++];
+        rows = rows.filter((row) => row.timestamp > value);
+      }
+      const limit = params[idx] ?? 50;
+      return rows.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
     }
 
     if (sql.includes("status IN ('queued', 'running')")) {

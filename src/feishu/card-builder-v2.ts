@@ -137,6 +137,15 @@ export function buildCardV2(state: CardState): string {
     elements.push({ tag: 'hr' });
   }
 
+  if (state.progressUpdates && state.progressUpdates.length > 0) {
+    const latest = state.progressUpdates[state.progressUpdates.length - 1];
+    elements.push({
+      tag:     'markdown',
+      content: `▸ **Progress updates (${state.progressUpdates.length})**\nLatest: _${truncate(latest.text, 220)}_`,
+    });
+    elements.push({ tag: 'hr' });
+  }
+
   // Response content (parsed into blocks)
   if (state.responseText) {
     elements.push(...responseToElements(state.responseText));
@@ -232,6 +241,8 @@ export function buildCardV2(state: CardState): string {
       summary: {
         content: state.responseText
           ? state.responseText.replace(/[\r\n]+/g, ' ').slice(0, 60)
+          : state.progressUpdates?.length
+            ? `Progress updates (${state.progressUpdates.length})`
           : config.title,
       },
     },

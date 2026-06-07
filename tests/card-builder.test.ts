@@ -73,6 +73,28 @@ describe('buildCard', () => {
     expect(note.elements[0].content).toContain('5.0s');
   });
 
+  it('renders progress updates outside the response body', () => {
+    const state: CardState = {
+      status: 'complete',
+      userPrompt: 'task',
+      responseText: '最终结果：已完成。',
+      toolCalls: [],
+      progressUpdates: [
+        { text: '我会先检查当前 git 状态。', source: 'assistant', timestamp: 1 },
+      ],
+    };
+    const json = JSON.parse(buildCard(state));
+    const progress = json.elements.find(
+      (e: any) => e.tag === 'markdown' && /Progress updates/.test(e.content),
+    );
+    const body = json.elements.find(
+      (e: any) => e.tag === 'markdown' && e.content === '最终结果：已完成。',
+    );
+    expect(progress).toBeDefined();
+    expect(progress.content).toContain('我会先检查当前 git 状态');
+    expect(body).toBeDefined();
+  });
+
   // Cards from flushSpontaneous (between-turn agent activity) are sent with
   // the `agent_activity` status so users can see at a glance that the card
   // isn't a normal user-turn reply. Blue header, distinct title — the body

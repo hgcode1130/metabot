@@ -1,6 +1,7 @@
 import type * as http from 'node:http';
 import { jsonResponse, parseJsonBody } from './helpers.js';
 import type { RouteContext } from './types.js';
+import type { ScheduleMetadata } from '../../scheduler/task-scheduler.js';
 
 export async function handleTaskRoutes(
   ctx: RouteContext,
@@ -244,6 +245,7 @@ export async function handleTaskRoutes(
     const sendCards = body.sendCards as boolean | undefined;
     const label = body.label as string | undefined;
     const timezone = body.timezone as string | undefined;
+    const metadata = readScheduleMetadata(body);
 
     if (!botName || !chatId || !prompt) {
       jsonResponse(res, 400, { error: 'Missing required fields: botName, chatId, prompt' });
@@ -258,7 +260,7 @@ export async function handleTaskRoutes(
 
     if (cronExpr) {
       const recurring = scheduler.scheduleRecurring({
-        botName, chatId, prompt, cronExpr, timezone, sendCards, label,
+        botName, chatId, prompt, cronExpr, timezone, sendCards, label, metadata,
       });
       jsonResponse(res, 201, {
         id: recurring.id, type: 'recurring', botName: recurring.botName,
@@ -268,7 +270,7 @@ export async function handleTaskRoutes(
         ...(recurring.metadata ? { metadata: recurring.metadata } : {}),
       });
     } else if (typeof delaySeconds === 'number' && delaySeconds > 0) {
-      const task = scheduler.scheduleTask({ botName, chatId, prompt, delaySeconds, sendCards, label });
+      const task = scheduler.scheduleTask({ botName, chatId, prompt, delaySeconds, sendCards, label, metadata });
       jsonResponse(res, 201, {
         id: task.id, type: 'one-time', botName: task.botName, chatId: task.chatId,
         prompt: task.prompt, executeAt: new Date(task.executeAt).toISOString(),
@@ -287,6 +289,8 @@ export async function handleTaskRoutes(
       id: t.id, type: 'one-time', botName: t.botName, chatId: t.chatId,
       prompt: t.prompt, executeAt: new Date(t.executeAt).toISOString(),
       sendCards: t.sendCards, label: t.label, status: t.status, createdAt: new Date(t.createdAt).toISOString(),
+      errorCode: t.errorCode, errorKind: t.errorKind, retryable: t.retryable,
+      providerStatus: t.providerStatus, needsCompensation: t.needsCompensation,
       ...(t.metadata ? { metadata: t.metadata } : {}),
     }));
     const recurringTasks = scheduler.listRecurringTasks().map((r) => ({
@@ -294,6 +298,9 @@ export async function handleTaskRoutes(
       prompt: r.prompt, cronExpr: r.cronExpr, timezone: r.timezone,
       nextExecuteAt: new Date(r.nextExecuteAt).toISOString(),
       lastExecutedAt: r.lastExecutedAt ? new Date(r.lastExecutedAt).toISOString() : null,
+      lastFailureAt: r.lastFailureAt ? new Date(r.lastFailureAt).toISOString() : null,
+      lastError: r.lastError, needsCompensation: r.needsCompensation,
+      compensationReason: r.compensationReason,
       sendCards: r.sendCards, label: r.label, status: r.status, createdAt: new Date(r.createdAt).toISOString(),
       ...(r.metadata ? { metadata: r.metadata } : {}),
     }));
@@ -398,4 +405,29 @@ export async function handleTaskRoutes(
   }
 
   return false;
+}
+
+function readScheduleMetadata(body: Record<string, unknown>): ScheduleMetadata | undefined {
+  const raw = isObject(body.metadata) ? body.metadata : {};
+  const sideEffectClass = readSideEffectClass(raw.sideEffectClass ?? body.sideEffectClass);
+  const idempotencyKey = readString(raw.idempotencyKey ?? body.idempotencyKey);
+  const metadata = { ...raw };
+  delete metadata.sideEffectClass;
+  delete metadata.idempotencyKey;
+  if (sideEffectClass) metadata.sideEffectClass = sideEffectClass;
+  if (idempotencyKey) metadata.idempotencyKey = idempotencyKey;
+  return Object.keys(metadata).length > 0 ? metadata as ScheduleMetadata : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readSideEffectClass(value: unknown): ScheduleMetadata['sideEffectClass'] | undefined {
+  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  return undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }

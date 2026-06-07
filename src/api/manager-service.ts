@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import type { BotRegistry, RegisteredBot } from './bot-registry.js';
+import type { CircuitBreaker } from './circuit-breaker.js';
 import { ManagerStore, type ManagerStoreOptions, type ManagerTask, type ManagerTaskEvent, type ManagerTaskStatus } from './manager-store.js';
 import type { TaskScheduler, ScheduledTask, RecurringTask, ScheduleMetadata } from '../scheduler/task-scheduler.js';
 import type { CardState } from '../types.js';
@@ -8,6 +9,10 @@ import {
   classifyRetryableTaskError,
   maxRetriesFor,
   retryDelayMs,
+  retrySafetyDecision,
+  shouldOpenProviderCircuit,
+  taskErrorMetadata,
+  type SideEffectClass,
   type RetryableTaskError,
 } from '../utils/retry-policy.js';
 import { getDefaultTaskExecutionQueue } from '../utils/task-execution-queue.js';
@@ -17,6 +22,19 @@ import {
   type ManagerCheckpointPayload,
 } from './manager-checkpoint.js';
 import { buildWorkerTaskPrompt, normalizeWorkerTaskTemplate, WORKER_TASK_OUTPUT_CONTRACT_VERSION, type WorkerTaskTemplate } from './manager-worker-template.js';
+import {
+  buildInstructionContract,
+  contractMetadata,
+  readInstructionContract,
+  type InstructionContract,
+} from '../utils/instruction-contract.js';
+import {
+  buildAcceptanceReport,
+  parseWorkerResult,
+  workerResultSummary,
+  type WorkerArtifact,
+  type WorkerResult,
+} from './worker-result.js';
 
 export interface ManagerScope {
   managerBotName: string;
@@ -45,6 +63,10 @@ export interface DispatchTaskInput {
   relatedTaskId?: string;
   workflowId?: string;
   metadata?: Record<string, unknown>;
+  forbiddenActions?: string[];
+  acceptanceCriteria?: string[];
+  sideEffectClass?: SideEffectClass;
+  idempotencyKey?: string;
   sendCards?: boolean;
   waitTimeoutSeconds?: number;
 }
@@ -75,6 +97,8 @@ export interface ScheduleReminderInput {
   label?: string;
   sendCards?: boolean;
   traceId?: string;
+  sideEffectClass?: SideEffectClass;
+  idempotencyKey?: string;
 }
 
 export type ManagerReminder =
@@ -101,6 +125,10 @@ export type ManagerReminder =
       timezone: string;
       nextExecuteAt: number;
       lastExecutedAt?: number;
+      lastFailureAt?: number;
+      lastError?: string;
+      needsCompensation?: boolean;
+      compensationReason?: string;
       sendCards: boolean;
       label?: string;
       status: RecurringTask['status'];
@@ -111,6 +139,7 @@ export type ManagerReminder =
 export interface ManagerServiceOptions extends ManagerStoreOptions {
   store?: ManagerStore;
   retryDelayMs?: (classification: RetryableTaskError, retryNumber: number) => number;
+  circuitBreaker?: CircuitBreaker;
 }
 
 interface WorkerQueueEntry {
@@ -138,6 +167,7 @@ export class ManagerService {
   private readonly managerConcurrency = new Map<string, ManagerConcurrencyState>();
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryDelay: (classification: RetryableTaskError, retryNumber: number) => number;
+  private readonly circuitBreaker?: CircuitBreaker;
 
   constructor(
     private readonly registry: BotRegistry,
@@ -149,6 +179,7 @@ export class ManagerService {
     this.store = options.store ?? new ManagerStore(logger, { dbPath: options.dbPath });
     this.ownsStore = !options.store;
     this.retryDelay = options.retryDelayMs ?? ((classification, retryNumber) => retryDelayMs(classification, retryNumber));
+    this.circuitBreaker = options.circuitBreaker;
 
     this.recoverInterruptedTasks();
   }
@@ -195,6 +226,16 @@ export class ManagerService {
 
     const workerChatId = buildWorkerChatId(scope, worker.name, input.sessionKey);
     const taskTemplate = normalizeWorkerTaskTemplate(input.taskTemplate);
+    const contract = buildInstructionContract({
+      prompt: input.prompt,
+      metadata: {
+        ...(input.metadata ?? {}),
+        forbiddenActions: input.forbiddenActions,
+        acceptanceCriteria: input.acceptanceCriteria,
+      },
+      sideEffectClass: input.sideEffectClass,
+      idempotencyKey: input.idempotencyKey,
+    });
     const task = this.store.createTask({
       managerBotName: scope.managerBotName,
       managerChatId: scope.managerChatId,
@@ -207,11 +248,15 @@ export class ManagerService {
         sessionKey: input.sessionKey ?? DEFAULT_SESSION_KEY,
         taskTemplate,
         outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION,
+        instructionContract: contractMetadata(contract),
         sendCards: input.sendCards ?? false,
+        sideEffectClass: contract.sideEffectClass,
+        ...(contract.idempotencyKey ? { idempotencyKey: contract.idempotencyKey } : {}),
         ...(input.relatedTaskId ? { relatedTaskId: input.relatedTaskId } : {}),
         ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       },
     });
+    this.store.appendEvent(task.id, 'instruction_contract', contractMetadata(contract));
     this.store.appendEvent(task.id, 'queued', { workerChatId });
 
     this.enqueueWorkerTask(task.id, workerChatId, input.sendCards ?? false);
@@ -237,6 +282,16 @@ export class ManagerService {
       return { mode: 'dispatched', task };
     }
 
+    const followUpContract = buildInstructionContract({
+      prompt: input.prompt,
+      metadata: {
+        ...(input.metadata ?? {}),
+        forbiddenActions: input.forbiddenActions,
+        acceptanceCriteria: input.acceptanceCriteria,
+      },
+      sideEffectClass: input.sideEffectClass,
+      idempotencyKey: input.idempotencyKey,
+    });
     const followUpPrompt = shouldWrapFollowUpPrompt(input)
       ? buildWorkerTaskPrompt({
           prompt: input.prompt,
@@ -248,6 +303,7 @@ export class ManagerService {
           label: input.label ?? running.label,
           relatedTaskId: input.relatedTaskId,
           workflowId: input.workflowId,
+          instructionContract: followUpContract,
         })
       : input.prompt;
 
@@ -263,6 +319,7 @@ export class ManagerService {
       ...(input.taskTemplate ? { taskTemplate: normalizeWorkerTaskTemplate(input.taskTemplate) } : {}),
       ...(input.relatedTaskId ? { relatedTaskId: input.relatedTaskId } : {}),
       ...(input.workflowId ? { workflowId: input.workflowId } : {}),
+      instructionContract: contractMetadata(followUpContract),
       ...(followUpPrompt !== input.prompt ? { outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION } : {}),
     });
     return { mode: 'attached', task: this.store.getTask(running.id) ?? running, prompt: followUpPrompt };
@@ -355,6 +412,8 @@ export class ManagerService {
       createdByBotName: scope.managerBotName,
       createdByChatId: scope.managerChatId,
       traceId: input.traceId ?? `trace-${crypto.randomUUID()}`,
+      ...(input.sideEffectClass ? { sideEffectClass: input.sideEffectClass } : {}),
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     };
 
     if (hasCron) {
@@ -571,7 +630,12 @@ export class ManagerService {
 
     const worker = this.registry.get(task.workerBotName);
     if (!worker) {
-      this.failTask(task, `Worker bot not found: ${task.workerBotName}`);
+      this.failTask(task, `Worker bot not found: ${task.workerBotName}`, { recordProviderFailure: false });
+      await this.notifyManager(task.id);
+      return;
+    }
+    if (!this.isProviderAvailable(task.workerBotName)) {
+      this.failTask(task, `Bot "${task.workerBotName}" is temporarily unavailable (circuit open)`, { recordProviderFailure: false });
       await this.notifyManager(task.id);
       return;
     }
@@ -592,6 +656,7 @@ export class ManagerService {
       (payload) => this.appendCheckpoint(task.id, payload),
       { attempt, workerChatId: task.workerChatId },
     );
+    const contract = instructionContractForTask(task);
 
     try {
       const result = await worker.bridge.executeApiTask({
@@ -601,6 +666,19 @@ export class ManagerService {
         sendCards,
         executionSource: 'manager-worker',
         backgroundWorker: true,
+        actionGatePolicy: {
+          forbiddenActions: contract.forbiddenActions,
+          taskId: task.id,
+          traceId: task.traceId,
+        },
+        onActionGateBlocked: (decision) => {
+          this.store.appendEvent(task.id, 'action_gate_blocked', {
+            action: decision.action,
+            command: decision.command,
+            reason: decision.reason,
+            traceId: task.traceId,
+          });
+        },
         onRawMessage: (message) => {
           this.store.appendEvent(task.id, 'worker_message', { message });
           checkpoint.fromRaw(message);
@@ -616,6 +694,8 @@ export class ManagerService {
       const completedAt = Date.now();
       const durationMs = result.durationMs ?? completedAt - startedAt;
       if (result.success) {
+        this.circuitBreaker?.recordSuccess(task.workerBotName);
+        const metadata = this.recordWorkerResult(task, result.responseText);
         checkpoint.final({ status: 'complete', responseText: result.responseText, costUsd: result.costUsd, durationMs });
         this.store.updateTask(task.id, {
           status: 'completed',
@@ -623,6 +703,7 @@ export class ManagerService {
           costUsd: result.costUsd,
           durationMs,
           resultText: result.responseText,
+          metadata,
         });
         this.store.appendEvent(task.id, 'completed', { durationMs, costUsd: result.costUsd });
         await this.notifyManager(task.id);
@@ -630,6 +711,7 @@ export class ManagerService {
         const error = result.error ?? 'Worker task failed';
         checkpoint.final({ status: 'error', responseText: result.responseText, costUsd: result.costUsd, durationMs }, error);
         if (this.scheduleRetryIfNeeded({ task, error })) return;
+        this.recordProviderFailure(task.workerBotName, error);
         this.store.updateTask(task.id, {
           status: 'failed',
           completedAt,
@@ -638,7 +720,7 @@ export class ManagerService {
           resultText: result.responseText,
           error,
         });
-        this.store.appendEvent(task.id, 'failed', { durationMs, error });
+        this.store.appendEvent(task.id, 'failed', { durationMs, error, ...taskErrorMetadata(error) });
         await this.notifyManager(task.id);
       }
     } catch (err: any) {
@@ -662,6 +744,7 @@ export class ManagerService {
       label: task.label,
       relatedTaskId: task.metadata?.relatedTaskId,
       workflowId: task.metadata?.workflowId,
+      instructionContract: instructionContractForTask(task),
     });
     if (!shouldIncludeResumeInstructions(task)) return basePrompt;
     return `${basePrompt}\n\n${this.resumeInstructions(task)}`;
@@ -689,10 +772,34 @@ export class ManagerService {
     this.store.updateTask(taskId, { lastCheckpointAt: Date.now() });
   }
 
+  private isProviderAvailable(botName: string): boolean {
+    return this.circuitBreaker?.isAvailable(botName) ?? true;
+  }
+
+  private recordProviderFailure(botName: string, error: unknown): void {
+    if (!this.circuitBreaker) return;
+    if (shouldOpenProviderCircuit(error)) {
+      const metadata = taskErrorMetadata(error);
+      this.circuitBreaker.open(botName, metadata.errorReason ?? 'auth/configuration error');
+      return;
+    }
+    this.circuitBreaker.recordFailure(botName);
+  }
+
   private scheduleRetryIfNeeded(input: RetrySchedulingInput): boolean {
     const task = this.store.getTask(input.task.id) ?? input.task;
     const classification = classifyRetryableTaskError(input.error);
     if (!classification.retryable) return false;
+    const safety = retrySafetyDecision(classification, task.metadata);
+    if (!safety.allowed) {
+      this.store.appendEvent(task.id, 'retry_paused', {
+        code: classification.code,
+        kind: classification.kind,
+        reason: safety.reason,
+        sideEffectClass: safety.sideEffectClass,
+      });
+      return false;
+    }
     if (task.attemptCount >= Math.min(task.maxAttempts, maxRetriesFor(classification))) {
       this.markRetryExhausted(task, classification.reason);
       return false;
@@ -706,6 +813,7 @@ export class ManagerService {
       attemptCount: task.attemptCount,
       maxAttempts: task.maxAttempts,
       reason,
+      ...taskErrorMetadata(reason),
     });
   }
 
@@ -714,6 +822,7 @@ export class ManagerService {
     const delayMs = this.retryDelay(classification, retryNumber);
     const nextAttemptAt = Date.now() + delayMs;
     const metadata = { ...(task.metadata ?? {}), retryResume: true };
+    const safety = retrySafetyDecision(classification, task.metadata);
     this.store.updateTask(task.id, {
       status: 'queued',
       attemptCount: retryNumber,
@@ -723,10 +832,14 @@ export class ManagerService {
     });
     this.store.appendEvent(task.id, 'retry_scheduled', {
       kind: classification.kind,
+      code: classification.code,
       reason: classification.reason,
       retryNumber,
       delayMs,
       nextAttemptAt,
+      providerStatus: classification.status,
+      sideEffectClass: safety.sideEffectClass,
+      idempotencyKey: safety.idempotencyKey,
     });
     this.scheduleRetryTimer(task.id, task.workerChatId, sendCardsForTask({ ...task, metadata }), delayMs);
   }
@@ -741,13 +854,51 @@ export class ManagerService {
     this.retryTimers.set(taskId, timer);
   }
 
-  private failTask(task: ManagerTask, error: string): void {
+  private failTask(
+    task: ManagerTask,
+    error: string,
+    options: { recordProviderFailure?: boolean } = {},
+  ): void {
+    if (options.recordProviderFailure !== false) this.recordProviderFailure(task.workerBotName, error);
     this.store.updateTask(task.id, {
       status: 'failed',
       completedAt: Date.now(),
       error,
     });
-    this.store.appendEvent(task.id, 'failed', { error });
+    this.store.appendEvent(task.id, 'failed', { error, ...taskErrorMetadata(error) });
+  }
+
+  private recordWorkerResult(task: ManagerTask, responseText: string): Record<string, unknown> {
+    const contract = instructionContractForTask(task);
+    const parsed = parseWorkerResult(responseText);
+    const report = buildAcceptanceReport(contract.acceptanceCriteria, parsed);
+    if (!parsed.ok) {
+      this.store.appendEvent(task.id, 'worker_result_invalid', { error: parsed.error });
+      this.store.appendEvent(task.id, 'acceptance_report', report);
+      return mergeTaskMetadata(task.metadata, {
+        workerResultError: parsed.error,
+        acceptanceReport: report,
+      });
+    }
+    return this.recordStructuredWorkerResult(task, parsed.result, report);
+  }
+
+  private recordStructuredWorkerResult(
+    task: ManagerTask,
+    result: WorkerResult,
+    report: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const summary = workerResultSummary(result);
+    this.store.appendEvent(task.id, 'worker_result', summary);
+    for (const artifact of result.artifacts) {
+      this.store.appendEvent(task.id, 'artifact_registered', artifactPayload(artifact));
+    }
+    this.store.appendEvent(task.id, 'acceptance_report', report);
+    return mergeTaskMetadata(task.metadata, {
+      workerResult: summary,
+      artifactRegistry: result.artifacts,
+      acceptanceReport: report,
+    });
   }
 
   private async notifyManager(taskId: string): Promise<void> {
@@ -803,7 +954,13 @@ export function buildWorkerChatId(scope: ManagerScope, workerBotName: string, se
 }
 
 function shouldWrapFollowUpPrompt(input: DispatchTaskInput): boolean {
-  return !!(input.taskTemplate || input.relatedTaskId || input.workflowId);
+  return !!(
+    input.taskTemplate
+    || input.relatedTaskId
+    || input.workflowId
+    || input.forbiddenActions?.length
+    || input.acceptanceCriteria?.length
+  );
 }
 
 function normalizeWaitTimeoutSeconds(waitTimeoutSeconds: number | undefined): number {
@@ -837,6 +994,29 @@ function managerScopeKey(task: Pick<ManagerTask, 'managerBotName' | 'managerChat
   return `${task.managerBotName}\u0000${task.managerChatId}`;
 }
 
+function instructionContractForTask(task: Pick<ManagerTask, 'prompt' | 'metadata'>): InstructionContract {
+  return readInstructionContract(task.metadata?.instructionContract)
+    ?? buildInstructionContract({ prompt: task.prompt, metadata: task.metadata });
+}
+
+function mergeTaskMetadata(
+  metadata: Record<string, unknown> | undefined,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...(metadata ?? {}), ...patch };
+}
+
+function artifactPayload(artifact: WorkerArtifact): Record<string, unknown> {
+  return {
+    ...(artifact.id ? { id: artifact.id } : {}),
+    ...(artifact.path ? { path: artifact.path } : {}),
+    ...(artifact.url ? { url: artifact.url } : {}),
+    ...(artifact.type ? { type: artifact.type } : {}),
+    ...(artifact.description ? { description: artifact.description } : {}),
+    ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+  };
+}
+
 function workerUpdatePayload(state: CardState, messageId: string, final: boolean): Record<string, unknown> {
   return {
     final,
@@ -845,6 +1025,7 @@ function workerUpdatePayload(state: CardState, messageId: string, final: boolean
     responseText: state.responseText,
     responsePreview: state.responseText?.slice(0, 1000),
     toolCalls: state.toolCalls,
+    progressUpdates: state.progressUpdates,
     backgroundEvents: state.backgroundEvents,
     teamState: state.teamState,
     pendingQuestion: state.pendingQuestion,
@@ -873,8 +1054,25 @@ function managerNotificationBody(task: ManagerTask): string {
   if (task.durationMs !== undefined) lines.push(`Duration: ${task.durationMs} ms`);
   if (task.costUsd !== undefined) lines.push(`Cost: $${task.costUsd}`);
   if (task.error) lines.push(`Error: ${task.error}`);
-  if (task.resultText) lines.push('', task.resultText);
+  const workerSummary = workerResultNotificationLines(task.metadata);
+  if (workerSummary.length > 0) {
+    lines.push('', ...workerSummary);
+  } else if (task.resultText) {
+    lines.push('', task.resultText);
+  }
   return lines.join('\n');
+}
+
+function workerResultNotificationLines(metadata: Record<string, unknown> | undefined): string[] {
+  const result = metadata?.workerResult;
+  if (!result || typeof result !== 'object') return [];
+  const obj = result as Record<string, unknown>;
+  const lines = [`Summary: ${String(obj.summary ?? '')}`];
+  const artifacts = Array.isArray(obj.artifacts) ? obj.artifacts : [];
+  const verification = Array.isArray(obj.verification) ? obj.verification : [];
+  if (verification.length > 0) lines.push(`Verification: ${verification.length} item(s)`);
+  if (artifacts.length > 0) lines.push(`Artifacts: ${artifacts.length} registered`);
+  return lines;
 }
 
 function managerNotificationColor(status: ManagerTaskStatus): string {
@@ -910,6 +1108,10 @@ function recurringToReminder(task: RecurringTask): ManagerReminder {
     timezone: task.timezone,
     nextExecuteAt: task.nextExecuteAt,
     lastExecutedAt: task.lastExecutedAt,
+    lastFailureAt: task.lastFailureAt,
+    lastError: task.lastError,
+    needsCompensation: task.needsCompensation,
+    compensationReason: task.compensationReason,
     sendCards: task.sendCards,
     label: task.label,
     status: task.status,

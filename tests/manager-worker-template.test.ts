@@ -28,7 +28,27 @@ describe('manager worker task templates', () => {
     expect(wrapped).toContain('Trace ID: trace-1');
     expect(wrapped).toContain(`Output contract version: ${WORKER_TASK_OUTPUT_CONTRACT_VERSION}`);
     expect(wrapped).toContain('## Required output contract');
+    expect(wrapped).toContain('```json METABOT_WORKER_RESULT');
+    expect(wrapped).toContain('"verification": [{"command":"exact check","status":"passed|failed|not_run","details":"short result"}]');
     expect(wrapped.match(/Run the requested task/g)).toHaveLength(1);
+  });
+
+  it('includes instruction contract fields when provided', () => {
+    const wrapped = buildWorkerTaskPrompt({
+      ...base,
+      instructionContract: {
+        version: '2026-06-07',
+        objective: 'Complete P0-P1',
+        forbiddenActions: ['train', 'push'],
+        acceptanceCriteria: ['tests pass'],
+        sideEffectClass: 'readOnly',
+      },
+    });
+
+    expect(wrapped).toContain('## Instruction Contract');
+    expect(wrapped).toContain('Forbidden actions: train, push');
+    expect(wrapped).toContain('Acceptance criteria: tests pass');
+    expect(wrapped).toContain('Side effect class: readOnly');
   });
 
   it('adds research-specific source requirements', () => {

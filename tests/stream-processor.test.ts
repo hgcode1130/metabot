@@ -76,6 +76,37 @@ describe('StreamProcessor', () => {
     expect(state.durationMs).toBe(1200);
   });
 
+  it('moves routine progress assistant text out of responseText', () => {
+    const p = new StreamProcessor('hi');
+    const state = p.processMessage(msg({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: 'text', text: '我会继续完成收尾，但不会启动 train。' }],
+      },
+    }));
+
+    expect(state.responseText).toBe('');
+    expect(state.progressUpdates?.[0]).toMatchObject({
+      text: '我会继续完成收尾，但不会启动 train。',
+      source: 'assistant',
+    });
+  });
+
+  it('preserves normal assistant conclusions that start with 先说结论', () => {
+    const p = new StreamProcessor('hi');
+    const state = p.processMessage(msg({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: 'text', text: '先说结论：这个方案可以实现。' }],
+      },
+    }));
+
+    expect(state.responseText).toBe('先说结论：这个方案可以实现。');
+    expect(state.progressUpdates).toBeUndefined();
+  });
+
   it('processes error result message', () => {
     const p = new StreamProcessor('hi');
     const state = p.processMessage(msg({

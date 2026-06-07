@@ -1,8 +1,10 @@
+import type { InstructionContract } from '../utils/instruction-contract.js';
+
 export const WORKER_TASK_TEMPLATES = ['general', 'research', 'implementation', 'review', 'audit'] as const;
 
 export type WorkerTaskTemplate = typeof WORKER_TASK_TEMPLATES[number];
 
-export const WORKER_TASK_OUTPUT_CONTRACT_VERSION = '2026-06-05';
+export const WORKER_TASK_OUTPUT_CONTRACT_VERSION = '2026-06-07';
 
 export interface BuildWorkerTaskPromptInput {
   prompt: string;
@@ -14,6 +16,7 @@ export interface BuildWorkerTaskPromptInput {
   label?: string;
   relatedTaskId?: unknown;
   workflowId?: unknown;
+  instructionContract?: InstructionContract;
 }
 
 export function normalizeWorkerTaskTemplate(value: unknown): WorkerTaskTemplate {
@@ -37,6 +40,7 @@ export function buildWorkerTaskPrompt(input: BuildWorkerTaskPromptInput): string
     stringValue(input.relatedTaskId) ? `Related task ID: ${stringValue(input.relatedTaskId)}` : undefined,
     `Template: ${template}`,
     `Output contract version: ${WORKER_TASK_OUTPUT_CONTRACT_VERSION}`,
+    ...instructionContractLines(input.instructionContract),
     '',
     '## Task',
     input.prompt.trim(),
@@ -49,8 +53,36 @@ export function buildWorkerTaskPrompt(input: BuildWorkerTaskPromptInput): string
     '- State verification performed and whether it passed, failed, or was not run.',
     '- State risks, gaps, uncertainty, or known limitations.',
     '- Recommend the next action for the manager.',
+    '- Do not put routine progress updates in the final response body.',
+    '- End with exactly one fenced JSON result block named METABOT_WORKER_RESULT:',
+    '```json METABOT_WORKER_RESULT',
+    '{',
+    '  "summary": "concise final outcome",',
+    '  "actionsTaken": ["concrete action"],',
+    '  "commands": ["exact command or empty"],',
+    '  "files": ["path inspected/changed/produced or empty"],',
+    '  "artifacts": [{"path":"optional path","url":"optional url","type":"optional type","description":"what it is","sha256":"optional checksum"}],',
+    '  "verification": [{"command":"exact check","status":"passed|failed|not_run","details":"short result"}],',
+    '  "risks": ["known risk or gap"],',
+    '  "nextAction": "recommended manager action"',
+    '}',
+    '```',
     ...templateSpecificContract(template),
   ].filter((line): line is string => line !== undefined).join('\n');
+}
+
+function instructionContractLines(contract: InstructionContract | undefined): string[] {
+  if (!contract) return [];
+  return [
+    '',
+    '## Instruction Contract',
+    `Contract version: ${contract.version}`,
+    `Objective: ${contract.objective || '(unspecified)'}`,
+    `Forbidden actions: ${contract.forbiddenActions.length > 0 ? contract.forbiddenActions.join(', ') : '(none)'}`,
+    `Acceptance criteria: ${contract.acceptanceCriteria.length > 0 ? contract.acceptanceCriteria.join(' | ') : '(manager will inspect result)'}`,
+    `Side effect class: ${contract.sideEffectClass}`,
+    contract.idempotencyKey ? `Idempotency key: ${contract.idempotencyKey}` : undefined,
+  ].filter((line): line is string => line !== undefined);
 }
 
 function templateSpecificContract(template: WorkerTaskTemplate): string[] {

@@ -10,6 +10,12 @@ import { AsyncQueue } from '../../utils/async-queue.js';
 import { buildLarkCliGuidance } from './lark-cli-guidance.js';
 import { buildManagerWorkerGuidance } from './manager-worker-guidance.js';
 import { makeCanUseTool } from './exit-plan-mode.js';
+import {
+  denialHookOutput,
+  evaluateToolUseActionGate,
+  type ActionGateDecision,
+  type ActionGatePolicy,
+} from '../../utils/action-gate.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -244,6 +250,10 @@ export interface ExecutorOptions {
   mcpServers?: SdkMcpServers;
   /** Called whenever Claude Code fires a team coordination hook. */
   onTeamEvent?: (event: TeamEvent) => void;
+  /** Explicit per-task forbidden action policy, derived from the instruction contract. */
+  actionGatePolicy?: ActionGatePolicy;
+  /** Called when the forbidden action policy blocks a tool use. */
+  onActionGateBlocked?: (decision: ActionGateDecision) => void;
 }
 
 export type SDKMessage = {
@@ -499,6 +509,28 @@ export class ClaudeExecutor {
       };
     };
 
+    const actionGateHook = async (
+      input: { tool_name: string; tool_input: unknown },
+    ): Promise<Record<string, unknown>> => {
+      const decision = evaluateToolUseActionGate(
+        options.actionGatePolicy,
+        input.tool_name,
+        input.tool_input,
+      );
+      if (decision.allowed) return {};
+      this.logger.warn(
+        {
+          action: decision.action,
+          command: decision.command,
+          taskId: options.actionGatePolicy?.taskId,
+          traceId: options.actionGatePolicy?.traceId,
+        },
+        'Action gate blocked tool use',
+      );
+      options.onActionGateBlocked?.(decision);
+      return denialHookOutput(decision);
+    };
+
     // Agent Teams observation hooks. These never block — they just tap the
     // event so we can re-render the team panel in the Feishu / Web card.
     // Returning {} (no decision) lets the underlying action proceed.
@@ -547,10 +579,16 @@ export class ClaudeExecutor {
     queryOptions.canUseTool = makeCanUseTool(this.logger);
 
     queryOptions.hooks = {
-      PreToolUse: [{
-        matcher: 'AskUserQuestion',
-        hooks: [askUserQuestionHook as any],
-      }],
+      PreToolUse: [
+        {
+          matcher: 'AskUserQuestion',
+          hooks: [askUserQuestionHook as any],
+        },
+        {
+          matcher: 'Bash',
+          hooks: [actionGateHook as any],
+        },
+      ],
       TaskCreated: [{ hooks: [teamObserverHook('task_created') as any] }],
       TaskCompleted: [{ hooks: [teamObserverHook('task_completed') as any] }],
       TeammateIdle: [{ hooks: [teamObserverHook('teammate_idle') as any] }],

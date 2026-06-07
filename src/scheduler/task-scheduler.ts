@@ -3,7 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from '../utils/logger.js';
-import type { BotRegistry } from '../api/bot-registry.js';
+import type { BotRegistry, RegisteredBot } from '../api/bot-registry.js';
+import type { CircuitBreaker } from '../api/circuit-breaker.js';
 import type { WebSocketHandle } from '../web/ws-server.js';
 import type { CardState } from '../types.js';
 import { isValidCron, nextCronOccurrence, getDefaultTimezone } from './cron-utils.js';
@@ -11,6 +12,10 @@ import {
   classifyRetryableTaskError,
   maxRetriesFor,
   retryDelayMs,
+  retrySafetyDecision,
+  shouldOpenProviderCircuit,
+  taskErrorMetadata,
+  type SideEffectClass,
   type RetryableTaskError,
 } from '../utils/retry-policy.js';
 
@@ -19,6 +24,8 @@ export interface ScheduleMetadata {
   createdByBotName?: string;
   createdByChatId?: string;
   traceId?: string;
+  sideEffectClass?: SideEffectClass;
+  idempotencyKey?: string;
 }
 
 // --- One-time task types (unchanged) ---
@@ -39,6 +46,11 @@ export interface ScheduledTask {
   nextAttemptAt?: number;
   lastRetryReason?: string;
   lastError?: string;
+  errorCode?: string;
+  errorKind?: string;
+  retryable?: boolean;
+  providerStatus?: number;
+  needsCompensation?: boolean;
   parentRecurringId?: string;  // set if spawned by a recurring task
   metadata?: ScheduleMetadata;
 }
@@ -75,6 +87,10 @@ export interface RecurringTask {
   createdAt: number;          // Unix ms
   nextExecuteAt: number;      // Unix ms — precomputed next fire time
   lastExecutedAt?: number;    // Unix ms
+  lastFailureAt?: number;     // Unix ms
+  lastError?: string;
+  needsCompensation?: boolean;
+  compensationReason?: string;
   currentChildId?: string;    // ID of the currently pending/executing child task
   metadata?: ScheduleMetadata;
 }
@@ -127,6 +143,7 @@ export class TaskScheduler {
   constructor(
     private registry: BotRegistry,
     private logger: Logger,
+    private circuitBreaker?: CircuitBreaker,
   ) {
     this.loadFromDisk();
   }
@@ -374,8 +391,14 @@ export class TaskScheduler {
     if (!bot) {
       this.logger.error({ taskId: id, botName: task.botName }, 'Scheduled task: bot not found');
       task.status = 'failed';
+      this.markTaskError(task, `Bot not found: ${task.botName}`);
       this.saveToDisk();
       this.completeRecurringChild(task);
+      return;
+    }
+
+    if (!this.isProviderAvailable(task.botName)) {
+      await this.failWithoutExecution(task, bot, `Bot "${task.botName}" is temporarily unavailable (circuit open)`);
       return;
     }
 
@@ -387,6 +410,18 @@ export class TaskScheduler {
     // Generate a messageId for WebSocket streaming
     const messageId = `sched_${task.id}`;
 
+    const retryQueued = await this.executeScheduledTask(task, bot, messageId);
+    if (retryQueued) return;
+
+    this.saveToDisk();
+    this.completeRecurringChild(task);
+  }
+
+  private async executeScheduledTask(
+    task: ScheduledTask,
+    bot: RegisteredBot,
+    messageId: string,
+  ): Promise<boolean> {
     try {
       const result = await bot.bridge.executeApiTask({
         prompt: task.prompt,
@@ -407,24 +442,34 @@ export class TaskScheduler {
 
       task.status = result.success ? 'completed' : 'failed';
       if (!result.success) {
-        if (this.scheduleRetryIfNeeded(task, result.error ?? 'Scheduled task failed')) return;
-        this.logger.warn({ taskId: id, error: result.error }, 'Scheduled task completed with error');
-        task.lastError = result.error;
+        if (this.scheduleRetryIfNeeded(task, result.error ?? 'Scheduled task failed')) return true;
+        this.logger.warn({ taskId: task.id, error: result.error }, 'Scheduled task completed with error');
+        this.markTaskError(task, result.error ?? 'Scheduled task failed');
+        await this.notifyTaskFailure(bot, task);
       }
     } catch (err: any) {
-      if (this.scheduleRetryIfNeeded(task, err)) return;
-      this.logger.error({ err, taskId: id }, 'Scheduled task execution error');
+      if (this.scheduleRetryIfNeeded(task, err)) return true;
+      this.logger.error({ err, taskId: task.id }, 'Scheduled task execution error');
       task.status = 'failed';
-      task.lastError = err?.message ?? 'Scheduled task execution error';
+      this.markTaskError(task, err?.message ?? 'Scheduled task execution error');
+      await this.notifyTaskFailure(bot, task);
     }
-
-    this.saveToDisk();
-    this.completeRecurringChild(task);
+    return false;
   }
 
   private scheduleRetryIfNeeded(task: ScheduledTask, error: unknown): boolean {
     const classification = classifyRetryableTaskError(error);
     if (!classification.retryable) return false;
+    const safety = retrySafetyDecision(classification, task.metadata);
+    if (!safety.allowed) {
+      task.lastRetryReason = safety.reason;
+      this.markTaskError(task, classification.reason);
+      this.logger.warn(
+        { taskId: task.id, errorCode: classification.code, sideEffectClass: safety.sideEffectClass },
+        'Scheduled task retry paused by side-effect safety policy',
+      );
+      return false;
+    }
     const maxAttempts = task.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     const retryNumber = (task.attemptCount ?? task.retryCount ?? 0) + 1;
     if (retryNumber > Math.min(maxAttempts, maxRetriesFor(classification))) return false;
@@ -441,6 +486,10 @@ export class TaskScheduler {
     task.executeAt = task.nextAttemptAt;
     task.lastRetryReason = classification.reason;
     task.lastError = classification.reason;
+    task.errorCode = classification.code;
+    task.errorKind = classification.kind;
+    task.retryable = true;
+    task.providerStatus = classification.status;
     const timer = setTimeout(() => this.fireTask(task.id), delayMs);
     this.timers.set(task.id, timer);
     this.saveToDisk();
@@ -450,6 +499,62 @@ export class TaskScheduler {
     );
   }
 
+  private isProviderAvailable(botName: string): boolean {
+    return this.circuitBreaker?.isAvailable(botName) ?? true;
+  }
+
+  private async failWithoutExecution(task: ScheduledTask, bot: RegisteredBot, error: string): Promise<void> {
+    task.status = 'failed';
+    this.markTaskError(task, error);
+    this.pauseRecurringForHealth(task, error);
+    await this.notifyTaskFailure(bot, task);
+    this.saveToDisk();
+    this.completeRecurringChild(task);
+  }
+
+  private markTaskError(task: ScheduledTask, error: unknown): void {
+    const message = errorText(error);
+    const metadata = taskErrorMetadata(error);
+    task.lastError = message;
+    task.errorCode = metadata.errorCode;
+    task.errorKind = metadata.errorKind;
+    task.retryable = metadata.retryable;
+    task.providerStatus = metadata.providerStatus;
+    task.needsCompensation = !!task.parentRecurringId;
+    if (shouldOpenProviderCircuit(error)) {
+      this.circuitBreaker?.open(task.botName, metadata.errorReason ?? message);
+      this.pauseRecurringForHealth(task, message);
+    }
+  }
+
+  private pauseRecurringForHealth(task: ScheduledTask, reason: string): void {
+    if (!task.parentRecurringId) return;
+    const recurring = this.recurringTasks.get(task.parentRecurringId);
+    if (!recurring || recurring.status !== 'active') return;
+    recurring.status = 'paused';
+    recurring.needsCompensation = true;
+    recurring.compensationReason = reason;
+    recurring.lastFailureAt = Date.now();
+    recurring.lastError = reason;
+    this.logger.warn({ recurringId: recurring.id, taskId: task.id, reason }, 'Recurring task paused by provider health gate');
+  }
+
+  private async notifyTaskFailure(bot: RegisteredBot, task: ScheduledTask): Promise<void> {
+    if (!task.sendCards) return;
+    const label = task.label ? `${task.label} (${task.id})` : task.id;
+    const lines = [
+      `Scheduled task failed: ${label}`,
+      `Error: ${task.lastError ?? 'Unknown error'}`,
+      task.errorCode ? `Error code: ${task.errorCode}` : undefined,
+      task.needsCompensation ? 'Compensation required: yes' : undefined,
+    ].filter((line): line is string => !!line);
+    try {
+      await bot.sender.sendTextNotice(task.chatId, 'Scheduled task failed', lines.join('\n'), 'red');
+    } catch (err) {
+      this.logger.error({ err, taskId: task.id }, 'Failed to send scheduled task failure notice');
+    }
+  }
+
   private completeRecurringChild(task: ScheduledTask): void {
     if (!task.parentRecurringId) return;
     if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') return;
@@ -457,12 +562,30 @@ export class TaskScheduler {
     if (!recurring || recurring.currentChildId !== task.id) return;
     recurring.lastExecutedAt = Date.now();
     recurring.currentChildId = undefined;
+    this.updateRecurringCompensationState(recurring, task);
     if (recurring.status !== 'active') return;
     recurring.nextExecuteAt = nextCronOccurrence(recurring.cronExpr, recurring.timezone);
     this.setRecurringTimer(recurring);
     this.logger.info(
       { recurringId: recurring.id, nextExecuteAt: new Date(recurring.nextExecuteAt).toISOString() },
       'Recurring task: next occurrence scheduled',
+    );
+  }
+
+  private updateRecurringCompensationState(recurring: RecurringTask, task: ScheduledTask): void {
+    if (task.status === 'completed') {
+      recurring.needsCompensation = false;
+      recurring.compensationReason = undefined;
+      return;
+    }
+    if (task.status !== 'failed') return;
+    recurring.lastFailureAt = Date.now();
+    recurring.lastError = task.lastError;
+    recurring.needsCompensation = true;
+    recurring.compensationReason = task.lastError;
+    this.logger.warn(
+      { recurringId: recurring.id, childId: task.id, errorCode: task.errorCode },
+      'Recurring task instance failed; compensation required',
     );
   }
 
@@ -628,4 +751,14 @@ export class TaskScheduler {
       this.logger.error({ err }, 'Failed to load scheduled tasks from disk');
     }
   }
+}
+
+function errorText(error: unknown): string {
+  if (typeof error === 'string' && error) return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message) return message;
+  }
+  return 'Unknown error';
 }

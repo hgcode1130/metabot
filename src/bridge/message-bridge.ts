@@ -38,6 +38,9 @@ import {
   getDefaultTaskExecutionQueue,
   type TaskExecutionSource,
 } from '../utils/task-execution-queue.js';
+import { taskErrorMetadata, type TaskErrorCode, type TaskErrorKind } from '../utils/retry-policy.js';
+import type { ActionGateDecision, ActionGatePolicy } from '../utils/action-gate.js';
+import { partitionProgressText } from '../utils/progress-updates.js';
 
 const TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const QUESTION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for user to answer
@@ -243,6 +246,10 @@ export interface ApiTaskOptions {
   executionSource?: TaskExecutionSource;
   /** Counts against process-wide background manager-worker capacity. */
   backgroundWorker?: boolean;
+  /** Explicit per-task forbidden action policy, derived from the instruction contract. */
+  actionGatePolicy?: ActionGatePolicy;
+  /** Called when an execution hook blocks a forbidden action. */
+  onActionGateBlocked?: (decision: ActionGateDecision) => void;
 }
 
 export interface ApiTaskResult {
@@ -252,6 +259,10 @@ export interface ApiTaskResult {
   costUsd?: number;
   durationMs?: number;
   error?: string;
+  errorCode?: TaskErrorCode;
+  errorKind?: TaskErrorKind;
+  retryable?: boolean;
+  providerStatus?: number;
 }
 
 export interface ActivityEventData {
@@ -264,7 +275,27 @@ export interface ActivityEventData {
   costUsd?: number;
   durationMs?: number;
   errorMessage?: string;
+  errorCode?: TaskErrorCode;
+  errorKind?: TaskErrorKind;
+  retryable?: boolean;
+  providerStatus?: number;
   timestamp: number;
+}
+
+function activityErrorFields(error: unknown): Partial<ActivityEventData> {
+  if (!error) return {};
+  const metadata = taskErrorMetadata(error);
+  return {
+    errorCode: metadata.errorCode,
+    errorKind: metadata.errorKind,
+    retryable: metadata.retryable,
+    providerStatus: metadata.providerStatus,
+  };
+}
+
+function auditErrorFields(error: unknown): Record<string, unknown> | undefined {
+  if (!error) return undefined;
+  return taskErrorMetadata(error) as unknown as Record<string, unknown>;
 }
 
 export class MessageBridge {
@@ -950,13 +981,15 @@ export class MessageBridge {
       return;
     }
 
-    const responseText = formatSpontaneousCardBody(buf.snippets);
+    const partitioned = partitionProgressText(buf.snippets, 'agent_activity');
+    const responseText = formatSpontaneousCardBody(partitioned.content);
 
     const card: CardState = {
       status: 'agent_activity',
       userPrompt: '(agent activity)',
       responseText,
       toolCalls: [],
+      progressUpdates: partitioned.progress.length > 0 ? partitioned.progress : undefined,
       teamState: buf.teamState,
     };
     try {
@@ -1205,6 +1238,8 @@ export class MessageBridge {
       onTeamEvent?: (event: TeamEvent) => void;
       maxTurns?: number;
       allowedTools?: string[];
+      actionGatePolicy?: ActionGatePolicy;
+      onActionGateBlocked?: (decision: ActionGateDecision) => void;
       freshSession?: boolean;
     },
   ): Promise<ExecutionHandle> {
@@ -1217,7 +1252,8 @@ export class MessageBridge {
       this.isPersistentExecutorEnabled() &&
       engineName === 'claude' &&
       opts.maxTurns === undefined &&
-      opts.allowedTools === undefined;
+      opts.allowedTools === undefined &&
+      opts.actionGatePolicy === undefined;
 
     if (usePersistent) {
       if (opts.freshSession) {
@@ -1252,6 +1288,8 @@ export class MessageBridge {
       onTeamEvent: opts.onTeamEvent,
       maxTurns: opts.maxTurns,
       allowedTools: opts.allowedTools,
+      actionGatePolicy: opts.actionGatePolicy,
+      onActionGateBlocked: opts.onActionGateBlocked,
       mcpServers: opts.mcpServers,
     });
   }
@@ -2220,12 +2258,14 @@ export class MessageBridge {
         event: auditEvent,
         botName: this.config.name, chatId, userId, prompt: text,
         durationMs, costUsd: lastState.costUsd, error: lastState.errorMessage,
+        meta: lastState.status === 'error' ? auditErrorFields(lastState.errorMessage) : undefined,
       });
       this.emitActivity({
         type: lastState.status === 'complete' ? 'task_completed' : 'task_failed',
         botName: this.config.name, chatId, userId, prompt: text?.slice(0, 200),
         responsePreview: lastState.responseText?.slice(0, 200),
         costUsd: lastState.costUsd, durationMs, errorMessage: lastState.errorMessage,
+        ...(lastState.status === 'error' ? activityErrorFields(lastState.errorMessage) : {}),
         timestamp: Date.now(),
       });
       this.costTracker.record({ botName: this.config.name, userId, success: lastState.status === 'complete', costUsd: lastState.costUsd, durationMs });
@@ -2285,12 +2325,14 @@ export class MessageBridge {
             event: lastState.status === 'error' ? 'task_error' : 'task_complete',
             botName: this.config.name, chatId, userId, prompt: text,
             durationMs, costUsd: lastState.costUsd, error: lastState.errorMessage,
+            meta: lastState.status === 'error' ? auditErrorFields(lastState.errorMessage) : undefined,
           });
           this.emitActivity({
             type: lastState.status === 'complete' ? 'task_completed' : 'task_failed',
             botName: this.config.name, chatId, userId, prompt: text?.slice(0, 200),
             responsePreview: lastState.responseText?.slice(0, 200),
             costUsd: lastState.costUsd, durationMs, errorMessage: lastState.errorMessage,
+            ...(lastState.status === 'error' ? activityErrorFields(lastState.errorMessage) : {}),
             timestamp: Date.now(),
           });
           this.costTracker.record({ botName: this.config.name, userId, success: lastState.status === 'complete', costUsd: lastState.costUsd, durationMs });
@@ -2311,10 +2353,12 @@ export class MessageBridge {
       this.audit.log({
         event: 'task_error', botName: this.config.name, chatId, userId, prompt: text,
         durationMs, error: err.message || 'Unknown error',
+        meta: auditErrorFields(err.message || 'Unknown error'),
       });
       this.emitActivity({
         type: 'task_failed', botName: this.config.name, chatId, userId, prompt: text?.slice(0, 200),
         errorMessage: err.message || 'Unknown error', durationMs, timestamp: Date.now(),
+        ...activityErrorFields(err.message || 'Unknown error'),
       });
       this.costTracker.record({ botName: this.config.name, userId, success: false, durationMs });
       metrics.incCounter('metabot_tasks_total');
@@ -2444,6 +2488,8 @@ export class MessageBridge {
       maxTurns: options.maxTurns,
       model: options.model ?? session.model,
       allowedTools: options.allowedTools,
+      actionGatePolicy: options.actionGatePolicy,
+      onActionGateBlocked: options.onActionGateBlocked,
       onTeamEvent,
     });
 
@@ -2585,6 +2631,8 @@ export class MessageBridge {
         const retryHandle = await this.runOneTurn(chatId, engineName, {
           prompt, cwd, abortController, outputsDir, apiContext, mcpServers,
           model: options.model ?? session.model,
+          actionGatePolicy: options.actionGatePolicy,
+          onActionGateBlocked: options.onActionGateBlocked,
           onTeamEvent, freshSession: true,
         });
         executionHandle.finish();
@@ -2621,15 +2669,20 @@ export class MessageBridge {
       }
 
       const durationMs = Date.now() - startTime;
+      const errorFields = lastState.status === 'error'
+        ? activityErrorFields(lastState.errorMessage)
+        : {};
       this.audit.log({
         event: 'api_task_complete', botName: this.config.name, chatId, userId, prompt,
         durationMs, costUsd: lastState.costUsd, error: lastState.errorMessage,
+        meta: lastState.status === 'error' ? auditErrorFields(lastState.errorMessage) : undefined,
       });
       this.emitActivity({
         type: lastState.status === 'complete' ? 'task_completed' : 'task_failed',
         botName: this.config.name, chatId, userId, prompt: prompt?.slice(0, 200),
         responsePreview: lastState.responseText?.slice(0, 200),
         costUsd: lastState.costUsd, durationMs, errorMessage: lastState.errorMessage,
+        ...errorFields,
         timestamp: Date.now(),
       });
       this.costTracker.record({ botName: this.config.name, userId, success: lastState.status === 'complete', costUsd: lastState.costUsd, durationMs });
@@ -2647,6 +2700,7 @@ export class MessageBridge {
         costUsd: lastState.costUsd,
         durationMs: lastState.durationMs,
         error: lastState.errorMessage,
+        ...errorFields,
       };
     } catch (err: any) {
       this.logger.error({ err, chatId, userId }, 'API task execution error');
@@ -2666,6 +2720,8 @@ export class MessageBridge {
           const retryHandle = await this.runOneTurn(chatId, engineName, {
             prompt, cwd, abortController, outputsDir, apiContext, mcpServers,
             model: options.model ?? session.model,
+            actionGatePolicy: options.actionGatePolicy,
+            onActionGateBlocked: options.onActionGateBlocked,
             onTeamEvent, freshSession: true,
           });
           executionHandle.finish();
@@ -2699,6 +2755,9 @@ export class MessageBridge {
             if (outputFiles.length > 0) options.onOutputFiles(outputFiles);
           }
 
+          const retryErrorFields = lastState.status === 'error'
+            ? activityErrorFields(lastState.errorMessage)
+            : {};
           return {
             success: lastState.status === 'complete',
             responseText: lastState.responseText,
@@ -2706,6 +2765,7 @@ export class MessageBridge {
             costUsd: lastState.costUsd,
             durationMs: lastState.durationMs,
             error: lastState.errorMessage,
+            ...retryErrorFields,
           };
         } catch (retryErr: any) {
           this.logger.error({ err: retryErr, chatId }, 'API task retry after stale session also failed');
@@ -2737,12 +2797,14 @@ export class MessageBridge {
       this.emitActivity({
         type: 'task_failed', botName: this.config.name, chatId, userId, prompt: prompt?.slice(0, 200),
         errorMessage: err.message || 'Unknown error', durationMs: Date.now() - startTime, timestamp: Date.now(),
+        ...activityErrorFields(err.message || 'Unknown error'),
       });
 
       return {
         success: false,
         responseText: lastState.responseText,
         error: err.message || 'Unknown error',
+        ...activityErrorFields(err.message || 'Unknown error'),
       };
     } finally {
       clearTimeout(timeoutId);

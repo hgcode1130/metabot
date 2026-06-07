@@ -192,6 +192,26 @@ describe('buildCardV2', () => {
     expect(bg.content).toContain('check (20) running');
   });
 
+  it('renders progress updates outside response elements', () => {
+    const state: CardState = {
+      status:       'complete',
+      userPrompt:   'task',
+      responseText: '最终结果：已完成。',
+      toolCalls:    [],
+      progressUpdates: [
+        { text: '我会先检查当前 git 状态。', source: 'assistant', timestamp: 1 },
+      ],
+    };
+    const elements = findElements(JSON.parse(buildCardV2(state)));
+    const progress = elements.find(
+      (e) => e.tag === 'markdown' && typeof e.content === 'string' && /Progress updates/.test(e.content),
+    );
+    const serialized = JSON.stringify(elements);
+    expect(progress).toBeDefined();
+    expect(progress.content).toContain('我会先检查当前 git 状态');
+    expect(serialized).toContain('最终结果：已完成。');
+  });
+
   it('renders pendingQuestion as text-only (no buttons) with a typed-reply prompt', () => {
     // Buttons used to live here, but both schemas have unfixable mobile
     // click issues — v2 mobile silently drops `tag: action` blocks, and

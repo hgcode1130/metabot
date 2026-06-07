@@ -13,6 +13,7 @@ interface BotCircuit {
   failures: number;
   lastFailure: number;
   halfOpenSuccesses: number;
+  reason?: string;
 }
 
 export class CircuitBreaker {
@@ -47,6 +48,7 @@ export class CircuitBreaker {
       if (Date.now() - circuit.lastFailure >= this.config.resetTimeoutMs) {
         circuit.state = 'half-open';
         circuit.halfOpenSuccesses = 0;
+        circuit.reason = undefined;
         this.logger.info({ botName }, 'Circuit half-open, allowing probe request');
         return true;
       }
@@ -64,11 +66,13 @@ export class CircuitBreaker {
       if (circuit.halfOpenSuccesses >= this.config.halfOpenMaxAttempts) {
         circuit.state = 'closed';
         circuit.failures = 0;
+        circuit.reason = undefined;
         this.logger.info({ botName }, 'Circuit closed (recovered)');
       }
     } else if (circuit.state === 'closed') {
       // Reset failure count on success
       circuit.failures = 0;
+      circuit.reason = undefined;
     }
   }
 
@@ -81,18 +85,31 @@ export class CircuitBreaker {
     if (circuit.state === 'half-open') {
       // Failure during half-open -> back to open
       circuit.state = 'open';
+      circuit.reason = 'half-open probe failed';
       this.logger.warn({ botName, failures: circuit.failures }, 'Circuit re-opened (half-open probe failed)');
     } else if (circuit.failures >= this.config.failureThreshold) {
       circuit.state = 'open';
+      circuit.reason = 'failure threshold reached';
       this.logger.warn({ botName, failures: circuit.failures }, 'Circuit opened (threshold reached)');
     }
   }
 
+  /** Open a circuit immediately for explicit health failures such as auth_not_found. */
+  open(botName: string, reason: string): void {
+    const circuit = this.getCircuit(botName);
+    circuit.state = 'open';
+    circuit.failures++;
+    circuit.lastFailure = Date.now();
+    circuit.halfOpenSuccesses = 0;
+    circuit.reason = reason;
+    this.logger.warn({ botName, reason, failures: circuit.failures }, 'Circuit opened explicitly');
+  }
+
   /** Get status for all circuits. */
-  getStatus(): Record<string, { state: CircuitState; failures: number }> {
-    const status: Record<string, { state: CircuitState; failures: number }> = {};
+  getStatus(): Record<string, { state: CircuitState; failures: number; reason?: string }> {
+    const status: Record<string, { state: CircuitState; failures: number; reason?: string }> = {};
     for (const [name, circuit] of this.circuits) {
-      status[name] = { state: circuit.state, failures: circuit.failures };
+      status[name] = { state: circuit.state, failures: circuit.failures, reason: circuit.reason };
     }
     return status;
   }
