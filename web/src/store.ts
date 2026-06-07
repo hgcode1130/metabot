@@ -34,6 +34,7 @@ export interface BotStatus {
   engine?: 'claude' | 'kimi' | 'codex';
   model?: string;
   workingDirectory: string;
+  managerEnabled?: boolean;
   status: 'idle' | 'busy' | 'error';
   currentTask?: {
     chatId: string;

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { BotStatus, AgentMetadata } from '../../store';
 import { useStore } from '../../store';
 import { ActivityTimeline } from './ActivityTimeline';
+import { ManagerTasksPanel } from './ManagerTasksPanel';
 import s from './AgentDetailPanel.module.css';
 
 /* ── Icons ── */
@@ -247,6 +248,7 @@ function ActivityTab({ bot }: { bot: BotStatus }) {
           </div>
         </div>
       )}
+      <ManagerTasksPanel bot={bot} />
       <ActivityTimeline events={activityEvents} botFilter={bot.name} />
     </div>
   );

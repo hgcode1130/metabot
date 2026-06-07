@@ -166,6 +166,7 @@
   border: 1px solid var(--amber-soft);
   border-radius: var(--r-lg);
   padding: 18px 20px;
+  margin-bottom: 22px;
 }
 
 .taskHeader {

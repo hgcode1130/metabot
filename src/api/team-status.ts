@@ -3,6 +3,7 @@ import { getAgents, type AgentMetadata } from './agent-scanner.js';
 
 export interface BotStatus extends BotInfo {
   status: 'idle' | 'busy' | 'error';
+  managerEnabled?: boolean;
   currentTask?: {
     chatId: string;
     startTime: number;
@@ -65,6 +66,7 @@ export async function getTeamStatus(registry: BotRegistry): Promise<TeamStatus> 
     bots.push({
       ...botInfo,
       status,
+      managerEnabled: bot?.config.manager?.enabled === true,
       currentTask,
       stats: {
         totalTasks: botStats?.totalTasks ?? 0,

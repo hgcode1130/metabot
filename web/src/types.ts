@@ -182,6 +182,43 @@ export interface ActivityEvent {
   timestamp: number;
 }
 
+/* --- Manager worker task types --- */
+
+export type ManagerTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface ManagerTask {
+  id: string;
+  traceId: string;
+  managerBotName: string;
+  managerChatId: string;
+  workerBotName: string;
+  workerChatId: string;
+  label?: string;
+  prompt: string;
+  status: ManagerTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  costUsd?: number;
+  durationMs?: number;
+  resultText?: string;
+  error?: string;
+  attemptCount: number;
+  maxAttempts: number;
+  lastCheckpointAt?: string;
+  lastRetryReason?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ManagerTaskEvent {
+  id: string;
+  taskId: string;
+  type: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+}
+
 /* --- WebSocket messages --- */
 
 export type WSIncomingMessage =
