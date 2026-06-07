@@ -305,11 +305,10 @@ export function startMemoryServer(options: MemoryServerOptions): { server: http.
 
   server.listen(port, '0.0.0.0', () => {
     logger.info({ port }, 'MetaMemory server started');
-    // Show access URL with token for easy browser access
     const authToken = adminToken || secret;
     const baseUrl = `http://localhost:${port}`;
     if (authToken) {
-      logger.info({ url: `${baseUrl}?token=${authToken}` }, 'MetaMemory Web UI (token embedded)');
+      logger.info({ url: baseUrl, auth: 'token-configured' }, 'MetaMemory Web UI');
     } else {
       logger.info({ url: baseUrl }, 'MetaMemory Web UI (no auth)');
     }

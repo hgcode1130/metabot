@@ -42,13 +42,14 @@ describe('MetaMemory server request limits', () => {
 
   async function startAuthenticatedTestServer() {
     const databaseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'metamemory-auth-test-'));
+    const logger = createLogger();
     cleanups.push(() => fs.rmSync(databaseDir, { recursive: true, force: true }));
 
     const { server, storage } = startMemoryServer({
       port: 0,
       databaseDir,
       secret: 'test-secret',
-      logger: createLogger(),
+      logger,
     });
 
     cleanups.push(() => storage.close());
@@ -59,6 +60,7 @@ describe('MetaMemory server request limits', () => {
 
     return {
       url: `http://127.0.0.1:${address.port}`,
+      logger,
     };
   }
 
@@ -107,5 +109,17 @@ describe('MetaMemory server request limits', () => {
     await expect(foldersResponse.json()).resolves.toEqual({
       detail: 'Unauthorized',
     });
+  });
+
+  it('does not log the authenticated Web UI URL with an embedded token', async () => {
+    const { logger } = await startAuthenticatedTestServer();
+    const calls = (logger.info as any).mock.calls;
+
+    expect(calls).toContainEqual([
+      expect.objectContaining({ url: expect.stringMatching(/^http:\/\/localhost:/), auth: 'token-configured' }),
+      'MetaMemory Web UI',
+    ]);
+    expect(JSON.stringify(calls)).not.toContain('test-secret');
+    expect(JSON.stringify(calls)).not.toContain('token=test-secret');
   });
 });
