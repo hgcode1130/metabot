@@ -20,6 +20,12 @@ export function buildCodexManagerMcpConfigArgs(apiContext: ApiContext | undefine
   ];
 }
 
+export function buildCodexManagerMcpEnv(apiContext: ApiContext | undefined): Record<string, string> {
+  if (!apiContext?.managerToolsEnabled) return {};
+  const apiSecret = managerApiSecret();
+  return apiSecret ? { METABOT_API_SECRET: apiSecret } : {};
+}
+
 function resolveManagerMcpLaunch(): { command: string; args: string[] } {
   const jsPath = fileURLToPath(new URL('./manager-mcp-server.js', import.meta.url));
   if (existsSync(jsPath)) return { command: process.execPath, args: [jsPath] };
@@ -43,6 +49,15 @@ function localManagerApiBaseUrl(): string {
   if (process.env.METABOT_MANAGER_API_BASE_URL) return process.env.METABOT_MANAGER_API_BASE_URL;
   const port = process.env.METABOT_API_PORT || process.env.API_PORT || DEFAULT_MANAGER_API_PORT;
   return `http://127.0.0.1:${port}`;
+}
+
+function managerApiSecret(): string | undefined {
+  return trimmed(process.env.METABOT_API_SECRET) ?? trimmed(process.env.API_SECRET);
+}
+
+function trimmed(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized || undefined;
 }
 
 function serverOverride(key: string, value: string): string[] {

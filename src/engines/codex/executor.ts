@@ -5,8 +5,9 @@ import { AsyncQueue } from '../../utils/async-queue.js';
 import type { ExecutionHandle, ExecutorOptions, SDKMessage } from '../claude/executor.js';
 import { createCodexTranslatorState, translateCodexJsonEvent, type CodexJsonEvent } from './jsonl-translator.js';
 import { buildCodexArgs, resolveCodexModelMetadata, resolveCodexPath } from './codex-cli.js';
-import { buildCodexManagerMcpConfigArgs } from './manager-mcp-config.js';
+import { buildCodexManagerMcpConfigArgs, buildCodexManagerMcpEnv } from './manager-mcp-config.js';
 import { buildCodexPromptWithContext } from './prompt-context.js';
+import { evaluateToolUseActionGate, type ActionGateDecision, type ActionGatePolicy } from '../../utils/action-gate.js';
 
 const CODEX_EXECUTABLE = resolveCodexPath();
 export { buildCodexArgs, resolveCodexModelMetadata } from './codex-cli.js';
@@ -29,7 +30,7 @@ export class CodexExecutor {
       contextWindow: modelMetadata.contextWindow,
     });
     const managerMcpConfigArgs = buildCodexManagerMcpConfigArgs(apiContext);
-    const args = buildCodexArgs(codexConfig, cwd, fullPrompt, sessionId, model, managerMcpConfigArgs);
+    const managerMcpEnv = buildCodexManagerMcpEnv(apiContext);
     const startTime = Date.now();
     let child: ChildProcess | undefined;
     let sawResult = false;
@@ -52,7 +53,23 @@ export class CodexExecutor {
       });
     };
 
+    const blockForbiddenCommand = (event: CodexJsonEvent): boolean => {
+      if (event.type !== 'item.started' || event.item?.type !== 'command_execution') return false;
+      const decision = evaluateCodexActionGateEvent(options.actionGatePolicy, event);
+      if (decision.allowed) return false;
+      this.logger.warn(
+        { action: decision.action, command: decision.command, taskId: options.actionGatePolicy?.taskId, traceId: options.actionGatePolicy?.traceId },
+        'Codex action gate blocked command execution',
+      );
+      options.onActionGateBlocked?.(decision);
+      finishWithError(decision.reason ?? 'Action blocked by instruction contract');
+      if (child && !child.killed) child.kill('SIGTERM');
+      queue.finish();
+      return true;
+    };
+
     const emitEvent = (event: CodexJsonEvent): void => {
+      if (blockForbiddenCommand(event)) return;
       const messages = translateCodexJsonEvent(event, state);
       for (const message of messages) {
         if (message.type === 'result') sawResult = true;
@@ -75,9 +92,11 @@ export class CodexExecutor {
     };
 
     try {
-      child = spawn(codexConfig.executable || CODEX_EXECUTABLE, args, {
+      const spawnConfig = codexConfig;
+      const args = buildCodexArgs(spawnConfig, cwd, fullPrompt, sessionId, model, managerMcpConfigArgs);
+      child = spawn(spawnConfig.executable || CODEX_EXECUTABLE, args, {
         cwd,
-        env: { ...process.env, ...(codexConfig.env ?? {}) },
+        env: { ...process.env, ...(spawnConfig.env ?? {}), ...managerMcpEnv },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (err: any) {
@@ -144,4 +163,13 @@ export class CodexExecutor {
       handle.finish();
     }
   }
+}
+
+export function evaluateCodexActionGateEvent(
+  policy: ActionGatePolicy | undefined,
+  event: CodexJsonEvent,
+): ActionGateDecision {
+  if (event.type !== 'item.started' && event.type !== 'item.completed') return { allowed: true };
+  if (event.item?.type !== 'command_execution') return { allowed: true };
+  return evaluateToolUseActionGate(policy, 'Bash', { command: event.item.command });
 }

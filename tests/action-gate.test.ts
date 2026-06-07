@@ -34,6 +34,14 @@ describe('action gate', () => {
     ).allowed).toBe(false);
   });
 
+  it('does not hard-block Bash commands only because the instruction contract is read-only', () => {
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: [], sideEffectClass: 'readOnly' },
+      'Bash',
+      { command: 'rg TODO src' },
+    )).toEqual({ allowed: true });
+  });
+
   it('does not block non-Bash tools', () => {
     expect(evaluateToolUseActionGate(
       { forbiddenActions: ['delete'] },

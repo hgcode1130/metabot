@@ -1,5 +1,8 @@
+import type { SideEffectClass } from './retry-policy.js';
+
 export interface ActionGatePolicy {
   forbiddenActions: string[];
+  sideEffectClass?: SideEffectClass;
   taskId?: string;
   traceId?: string;
 }

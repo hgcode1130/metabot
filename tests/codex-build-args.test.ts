@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildCodexArgs, resolveCodexModelMetadata } from '../src/engines/codex/executor.js';
-import { buildCodexManagerMcpConfigArgs } from '../src/engines/codex/manager-mcp-config.js';
+import { buildCodexArgs, evaluateCodexActionGateEvent, resolveCodexModelMetadata } from '../src/engines/codex/executor.js';
+import {
+  buildCodexManagerMcpConfigArgs,
+  buildCodexManagerMcpEnv,
+} from '../src/engines/codex/manager-mcp-config.js';
+import { resolveManagerMcpApiSecret } from '../src/engines/codex/manager-mcp-server.js';
 import { buildCodexPromptWithContext } from '../src/engines/codex/prompt-context.js';
 import type { CodexBotConfig } from '../src/config.js';
 
@@ -11,13 +15,10 @@ describe('buildCodexArgs', () => {
   const cwd = '/work/proj';
   const prompt = 'run pwd';
 
-  it('defaults approval policy to "never" and sandbox to "danger-full-access"', () => {
+  it('defaults to bypassing Codex approvals and sandbox', () => {
     const args = buildCodexArgs({}, cwd, prompt, undefined, undefined);
     expect(args).toEqual([
-      '-a',
-      'never',
-      '--sandbox',
-      'danger-full-access',
+      '--dangerously-bypass-approvals-and-sandbox',
       '-C',
       cwd,
       'exec',
@@ -118,9 +119,11 @@ describe('buildCodexArgs', () => {
     }
   });
 
-  it('builds per-turn manager MCP config overrides for Codex', () => {
+  it('builds per-turn manager MCP config overrides for Codex without putting secrets in argv', () => {
     const priorPort = process.env.METABOT_API_PORT;
+    const priorSecret = process.env.METABOT_API_SECRET;
     process.env.METABOT_API_PORT = '9191';
+    process.env.METABOT_API_SECRET = 'manager-secret';
     try {
       const args = buildCodexManagerMcpConfigArgs({
         botName: 'manager',
@@ -134,9 +137,32 @@ describe('buildCodexArgs', () => {
       expect(args.join('\n')).toContain('METABOT_MANAGER_BOT_NAME="manager"');
       expect(args.join('\n')).toContain('METABOT_MANAGER_CHAT_ID="chat-a"');
       expect(args.join('\n')).toContain('METABOT_MANAGER_API_BASE_URL="http://127.0.0.1:9191"');
+      expect(args.join('\n')).not.toContain('METABOT_API_SECRET');
+      expect(args.join('\n')).not.toContain('manager-secret');
+      expect(buildCodexManagerMcpEnv({
+        botName: 'manager',
+        chatId: 'chat-a',
+        managerToolsEnabled: true,
+      })).toEqual({ METABOT_API_SECRET: 'manager-secret' });
     } finally {
       if (priorPort === undefined) delete process.env.METABOT_API_PORT;
       else process.env.METABOT_API_PORT = priorPort;
+      if (priorSecret === undefined) delete process.env.METABOT_API_SECRET;
+      else process.env.METABOT_API_SECRET = priorSecret;
+    }
+  });
+
+  it('lets the Codex manager MCP server recover API auth from MetaBot .env', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'metabot-manager-mcp-'));
+    try {
+      writeFileSync(join(dir, '.env'), 'API_SECRET=from-env-file\n');
+      expect(resolveManagerMcpApiSecret({ METABOT_HOME: dir })).toBe('from-env-file');
+      expect(resolveManagerMcpApiSecret({
+        METABOT_HOME: dir,
+        METABOT_API_SECRET: 'from-process-env',
+      })).toBe('from-process-env');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -148,5 +174,33 @@ describe('buildCodexArgs', () => {
     expect(fullPrompt).toContain('Manager / Worker Tools');
     expect(fullPrompt).toContain('metabot-manager MCP tools');
     expect(fullPrompt).toContain('get_worker_task');
+  });
+
+  it('evaluates Codex command execution events with the action gate', () => {
+    const decision = evaluateCodexActionGateEvent(
+      { forbiddenActions: ['push'], taskId: 'task-1', traceId: 'trace-1' },
+      {
+        type: 'item.started',
+        item: { id: 'cmd-1', type: 'command_execution', command: 'git push origin main' },
+      },
+    );
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      action: 'push',
+      command: 'git push origin main',
+    });
+  });
+
+  it('does not hard-block Codex command events only because policy is read-only', () => {
+    const decision = evaluateCodexActionGateEvent(
+      { forbiddenActions: [], sideEffectClass: 'readOnly' },
+      {
+        type: 'item.started',
+        item: { id: 'cmd-1', type: 'command_execution', command: 'ls -la' },
+      },
+    );
+
+    expect(decision).toEqual({ allowed: true });
   });
 });

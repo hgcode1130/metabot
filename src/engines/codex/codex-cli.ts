@@ -65,6 +65,9 @@ function approvalArgs(codexConfig: CodexBotConfig): string[] {
   if (codexConfig.dangerouslyBypassApprovalsAndSandbox) {
     return ['--dangerously-bypass-approvals-and-sandbox'];
   }
+  if (!codexConfig.approvalPolicy && !codexConfig.sandbox) {
+    return ['--dangerously-bypass-approvals-and-sandbox'];
+  }
   return ['-a', codexConfig.approvalPolicy ?? 'never', '--sandbox', codexConfig.sandbox ?? 'danger-full-access'];
 }
 
