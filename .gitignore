@@ -3,6 +3,7 @@ dist/
 .env
 bots.json
 logs/
+activity.db
 nohup.out
 *.log
 .DS_Store
