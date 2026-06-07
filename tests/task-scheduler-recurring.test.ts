@@ -301,6 +301,13 @@ describe('TaskScheduler - Recurring Tasks', () => {
     scheduler.destroy();
   });
 
+  it('fails visibly when the persisted schedule file is corrupt', () => {
+    fs.mkdirSync(PERSIST_DIR, { recursive: true });
+    fs.writeFileSync(PERSIST_FILE, '{not valid json');
+
+    expect(() => new TaskScheduler(createMockRegistry(), createMockLogger())).toThrow(SyntaxError);
+  });
+
   it('does not restore cancelled recurring tasks', () => {
     const logger = createMockLogger();
     const registry = createMockRegistry();

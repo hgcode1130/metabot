@@ -126,6 +126,7 @@ interface PersistedData {
 const DEFAULT_MAX_ATTEMPTS = 5;
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_SETTIMEOUT_MS = 2_147_483_647; // 2^31 - 1 (~24.8 days)
+const CHILD_TASK_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const PERSIST_DIR = path.join(os.homedir(), '.metabot');
 const PERSIST_FILE = path.join(PERSIST_DIR, 'scheduled-tasks.json');
 
@@ -653,104 +654,130 @@ export class TaskScheduler {
 
   private saveToDisk(): void {
     try {
-      fs.mkdirSync(PERSIST_DIR, { recursive: true });
-      // Prune old completed/failed child tasks to prevent unbounded growth
-      const tasks = Array.from(this.tasks.values()).filter((t) => {
-        if (t.parentRecurringId && (t.status === 'completed' || t.status === 'failed')) {
-          const age = Date.now() - t.createdAt;
-          return age < 7 * 24 * 60 * 60 * 1000; // keep for 7 days
-        }
-        return true;
-      });
       const data: PersistedData = {
-        tasks,
+        tasks: this.persistableTasks(),
         recurringTasks: Array.from(this.recurringTasks.values()),
       };
-      fs.writeFileSync(PERSIST_FILE, JSON.stringify(data, null, 2));
+      writeFileAtomic(PERSIST_FILE, JSON.stringify(data, null, 2));
     } catch (err) {
       this.logger.error({ err }, 'Failed to save scheduled tasks to disk');
+      throw err;
     }
   }
 
   private loadFromDisk(): void {
+    if (!fs.existsSync(PERSIST_FILE)) return;
     try {
-      if (!fs.existsSync(PERSIST_FILE)) return;
-
-      const raw = fs.readFileSync(PERSIST_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
+      const { taskList, recurringList } = readPersistedData(PERSIST_FILE);
       const now = Date.now();
-
-      // Backward compatibility: old format is a plain array of ScheduledTask
-      let taskList: ScheduledTask[];
-      let recurringList: RecurringTask[];
-      if (Array.isArray(parsed)) {
-        taskList = parsed;
-        recurringList = [];
-      } else {
-        taskList = (parsed as PersistedData).tasks || [];
-        recurringList = (parsed as PersistedData).recurringTasks || [];
-      }
-
-      // Restore one-time tasks
-      for (const task of taskList) {
-        if (task.status === 'executing') {
-          task.status = 'pending';
-          task.executeAt = now;
-          task.lastRetryReason = 'Process recovered while scheduled task was executing';
-        }
-        if (task.status !== 'pending') continue;
-
-        // Skip tasks that are more than 24h overdue (stale)
-        if (task.executeAt < now - STALE_THRESHOLD_MS) {
-          this.logger.info({ taskId: task.id }, 'Skipping stale scheduled task (>24h overdue)');
-          continue;
-        }
-
-        task.attemptCount = task.attemptCount ?? task.retryCount ?? 0;
-        task.maxAttempts = task.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-        if (task.nextAttemptAt && task.nextAttemptAt > now) {
-          task.executeAt = task.nextAttemptAt;
-        }
-        this.tasks.set(task.id, task);
-        this.setTimer(task);
-      }
-
-      // Restore recurring tasks
-      for (const recurring of recurringList) {
-        if (recurring.status === 'cancelled') continue;
-
-        this.recurringTasks.set(recurring.id, recurring);
-
-        if (recurring.status === 'active') {
-          // If there was a child task executing when process died, mark it failed
-          if (recurring.currentChildId) {
-            const child = taskList.find((t) => t.id === recurring.currentChildId);
-            if (child && child.status === 'pending') {
-              this.tasks.set(child.id, child);
-              if (!this.timers.has(child.id)) this.setTimer(child);
-              continue;
-            }
-            recurring.currentChildId = undefined;
-          }
-
-          // Recompute next occurrence from now (no catch-up for missed occurrences)
-          recurring.nextExecuteAt = nextCronOccurrence(recurring.cronExpr, recurring.timezone);
-          this.setRecurringTimer(recurring);
-        }
-      }
-
-      const restoredTasks = this.listTasks().length;
-      const restoredRecurring = this.listRecurringTasks().length;
-      if (restoredTasks > 0 || restoredRecurring > 0) {
-        this.logger.info(
-          { tasks: restoredTasks, recurring: restoredRecurring },
-          'Restored scheduled tasks from disk',
-        );
-      }
+      this.restoreOneTimeTasks(taskList, now);
+      this.restoreRecurringTasks(taskList, recurringList);
+      this.logRestoredTasks();
     } catch (err) {
-      this.logger.error({ err }, 'Failed to load scheduled tasks from disk');
+      this.logger.error({ err, path: PERSIST_FILE }, 'Failed to load scheduled tasks from disk');
+      throw err;
     }
   }
+
+  private persistableTasks(): ScheduledTask[] {
+    return Array.from(this.tasks.values()).filter((task) => {
+      if (!task.parentRecurringId || (task.status !== 'completed' && task.status !== 'failed')) return true;
+      return Date.now() - task.createdAt < CHILD_TASK_RETENTION_MS;
+    });
+  }
+
+  private restoreOneTimeTasks(taskList: ScheduledTask[], now: number): void {
+    for (const task of taskList) {
+      if (task.status === 'executing') {
+        task.status = 'pending';
+        task.executeAt = now;
+        task.lastRetryReason = 'Process recovered while scheduled task was executing';
+      }
+      if (task.status !== 'pending') continue;
+      if (task.executeAt < now - STALE_THRESHOLD_MS) {
+        this.logger.info({ taskId: task.id }, 'Skipping stale scheduled task (>24h overdue)');
+        continue;
+      }
+      task.attemptCount = task.attemptCount ?? task.retryCount ?? 0;
+      task.maxAttempts = task.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+      if (task.nextAttemptAt && task.nextAttemptAt > now) task.executeAt = task.nextAttemptAt;
+      this.tasks.set(task.id, task);
+      this.setTimer(task);
+    }
+  }
+
+  private restoreRecurringTasks(taskList: ScheduledTask[], recurringList: RecurringTask[]): void {
+    for (const recurring of recurringList) {
+      if (recurring.status === 'cancelled') continue;
+      this.recurringTasks.set(recurring.id, recurring);
+      if (recurring.status !== 'active') continue;
+      if (this.restoreRecurringChild(taskList, recurring)) continue;
+      recurring.currentChildId = undefined;
+      recurring.nextExecuteAt = nextCronOccurrence(recurring.cronExpr, recurring.timezone);
+      this.setRecurringTimer(recurring);
+    }
+  }
+
+  private restoreRecurringChild(taskList: ScheduledTask[], recurring: RecurringTask): boolean {
+    if (!recurring.currentChildId) return false;
+    const child = taskList.find((task) => task.id === recurring.currentChildId);
+    if (!child || child.status !== 'pending') return false;
+    this.tasks.set(child.id, child);
+    if (!this.timers.has(child.id)) this.setTimer(child);
+    return true;
+  }
+
+  private logRestoredTasks(): void {
+    const restoredTasks = this.listTasks().length;
+    const restoredRecurring = this.listRecurringTasks().length;
+    if (restoredTasks === 0 && restoredRecurring === 0) return;
+    this.logger.info({ tasks: restoredTasks, recurring: restoredRecurring }, 'Restored scheduled tasks from disk');
+  }
+}
+
+function readPersistedData(filePath: string): { taskList: ScheduledTask[]; recurringList: RecurringTask[] } {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const parsed = JSON.parse(raw) as PersistedData | ScheduledTask[];
+  if (Array.isArray(parsed)) return { taskList: parsed, recurringList: [] };
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error(`Invalid scheduled tasks persistence data in ${filePath}`);
+  }
+  return {
+    taskList: parsed.tasks || [],
+    recurringList: parsed.recurringTasks || [],
+  };
+}
+
+function writeFileAtomic(filePath: string, content: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(tmpPath, 'w');
+    fs.writeFileSync(fd, content, 'utf-8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmpPath, filePath);
+    fsyncDirectory(path.dirname(filePath));
+  } catch (err) {
+    if (fd !== undefined) fs.closeSync(fd);
+    removeTempFile(tmpPath);
+    throw err;
+  }
+}
+
+function fsyncDirectory(dirPath: string): void {
+  const fd = fs.openSync(dirPath, 'r');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function removeTempFile(tmpPath: string): void {
+  if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
 }
 
 function errorText(error: unknown): string {
