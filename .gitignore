@@ -6,6 +6,7 @@ logs/
 nohup.out
 *.log
 .DS_Store
+.cache/
 data/
 site/
 ios/MetaBot/.build/
