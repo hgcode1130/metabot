@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BotStatus } from '../../store';
 import { useStore } from '../../store';
 import type { ManagerTask, ManagerTaskEvent } from '../../types';
+import { ManagerTaskActions, type ManagerTaskAction } from './ManagerTaskActions';
 import s from './ManagerTasksPanel.module.css';
 
 const TASK_LIMIT = 12;
@@ -14,7 +15,8 @@ const EVENT_FILTERS = [
   { label: 'Update', value: 'worker_update' },
   { label: 'Failed', value: 'failed' },
   { label: 'Retry', value: 'retry_scheduled' },
-  { label: 'Cancel', value: 'cancel_failed_to_stop' },
+  { label: 'Cancelled', value: 'cancel_confirmed' },
+  { label: 'Cancel Fail', value: 'cancel_failed_to_stop' },
   { label: 'Blocked', value: 'action_gate_blocked' },
   { label: 'Notify', value: 'manager_notification_failed' },
 ] as const;
@@ -33,15 +35,13 @@ export function ManagerTasksPanel({ bot }: Props) {
   const [eventFilter, setEventFilter] = useState<EventFilter>('');
   const [loading, setLoading] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [actionTaskId, setActionTaskId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [eventsError, setEventsError] = useState('');
   const activeBotRef = useRef(bot.name);
   const activeTaskRef = useRef<string | null>(null);
 
-  const selectedTask = useMemo(
-    () => tasks.find((task) => task.id === selectedId) ?? tasks[0],
-    [tasks, selectedId],
-  );
+  const selectedTask = useMemo(() => tasks.find((task) => task.id === selectedId) ?? tasks[0], [tasks, selectedId]);
   const selectedTaskId = selectedTask?.id ?? null;
 
   const loadTasks = useCallback(async () => {
@@ -95,6 +95,29 @@ export function ManagerTasksPanel({ bot }: Props) {
       if (activeTaskRef.current === requestTaskId) setEventsLoading(false);
     }
   }, [token]);
+
+  const runTaskAction = useCallback(async (task: ManagerTask, action: ManagerTaskAction) => {
+    if (!token) return;
+    setActionTaskId(task.id);
+    setEventsError('');
+    try {
+      const endpoint = `/api/manager/tasks/${encodeURIComponent(task.id)}/${action}`;
+      const body = actionBody(task, action);
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await responseError(res));
+      await loadTasks();
+      activeTaskRef.current = task.id;
+      await loadEvents(task, eventFilter);
+    } catch (err) {
+      setEventsError(err instanceof Error ? err.message : `Failed to ${action} task`);
+    } finally {
+      setActionTaskId(null);
+    }
+  }, [eventFilter, loadEvents, loadTasks, token]);
 
   useEffect(() => {
     activeBotRef.current = bot.name;
@@ -167,8 +190,15 @@ export function ManagerTasksPanel({ bot }: Props) {
       {selectedTask && (
         <div className={s.detail}>
           <div className={s.detailHeader}>
-            <code>{selectedTask.traceId}</code>
-            <span>{selectedTask.attemptCount}/{selectedTask.maxAttempts} attempts</span>
+            <div className={s.detailMeta}>
+              <code>{selectedTask.traceId}</code>
+              <span>{selectedTask.attemptCount}/{selectedTask.maxAttempts} attempts</span>
+            </div>
+            <ManagerTaskActions
+              task={selectedTask}
+              disabled={actionTaskId === selectedTask.id}
+              onAction={(task, action) => { void runTaskAction(task, action); }}
+            />
           </div>
           {selectedTask.workflowId && <div className={s.empty}>Workflow: {selectedTask.workflowId}</div>}
           {selectedTask.nextAttemptAt && <div className={s.empty}>Next retry: {formatTime(selectedTask.nextAttemptAt)}</div>}
@@ -221,6 +251,12 @@ async function responseError(res: Response): Promise<string> {
 
 function shortId(value: string): string {
   return value.slice(0, 8);
+}
+
+function actionBody(task: ManagerTask, action: ManagerTaskAction): Record<string, string> {
+  const scope = { managerBotName: task.managerBotName, managerChatId: task.managerChatId };
+  if (action === 'resume') return scope;
+  return { ...scope, reason: 'Cancelled from web dashboard' };
 }
 
 function isActiveTask(task: ManagerTask): boolean {
