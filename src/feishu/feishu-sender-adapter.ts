@@ -49,7 +49,11 @@ export class FeishuSenderAdapter implements IMessageSender {
   }
 
   async sendTextNotice(chatId: string, title: string, content: string, color: string = 'blue'): Promise<void> {
-    await this.sender.sendCard(chatId, USE_V2 ? buildTextCardV2(title, content, color) : buildTextCard(title, content, color));
+    const messageId = await this.sender.sendCard(
+      chatId,
+      USE_V2 ? buildTextCardV2(title, content, color) : buildTextCard(title, content, color),
+    );
+    if (!messageId) throw new Error(`Failed to send Feishu text notice to chat ${chatId}`);
   }
 
   async sendText(chatId: string, text: string): Promise<void> {

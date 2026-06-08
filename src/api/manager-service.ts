@@ -427,6 +427,10 @@ export class ManagerService {
     if (task.status === 'running') {
       const worker = this.registry.get(task.workerBotName);
       stopped = worker?.bridge.stopChatTask(task.workerChatId) ?? false;
+      if (!stopped) {
+        this.store.appendEvent(task.id, 'cancel_failed_to_stop', { reason, workerBotName: task.workerBotName });
+        return false;
+      }
     }
 
     this.store.updateTask(task.id, {
@@ -434,6 +438,7 @@ export class ManagerService {
       completedAt: Date.now(),
       error: reason,
     });
+    this.store.appendEvent(task.id, 'cancel_confirmed', { reason, stopped });
     this.store.appendEvent(task.id, 'cancelled', { reason, stopped });
     return true;
   }

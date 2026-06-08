@@ -32,6 +32,8 @@ export const MANAGER_TASK_EVENT_TYPES = [
   'resume_queued',
   'resumed',
   'cancel_requested',
+  'cancel_confirmed',
+  'cancel_failed_to_stop',
   'cancelled',
   'process_recovered',
   'concurrency_waiting',

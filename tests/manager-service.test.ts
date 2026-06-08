@@ -524,6 +524,30 @@ describe('ManagerService', () => {
     );
   });
 
+  it('records notification failure without marking manager notified', async () => {
+    const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText: 'done',
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    (manager.sender.sendTextNotice as any).mockRejectedValue(new Error('Feishu send failed'));
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'notify me',
+      waitTimeoutSeconds: 1,
+    });
+
+    await waitFor(() => expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events
+      ?.some((event) => event.type === 'manager_notification_failed')).toBe(true));
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events ?? [];
+    expect(events.some((event) => event.type === 'manager_notified')).toBe(false);
+    expect(events.find((event) => event.type === 'manager_notification_failed')?.payload)
+      .toMatchObject({ error: 'Feishu send failed' });
+  });
+
   it('summarizes high-frequency worker stream events by default', async () => {
     const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
       for (let index = 0; index < 5; index++) {
@@ -913,11 +937,44 @@ describe('ManagerService', () => {
     expect(worker.bridge.stopChatTask).toHaveBeenCalledWith(task.workerChatId);
     expect(managerService.getTask(scope, task.id)).toMatchObject({ status: 'cancelled', error: 'no longer needed' });
     expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
-      .toEqual(['created', 'instruction_contract', 'queued', 'trace_policy', 'started', 'cancel_requested', 'cancelled']);
+      .toEqual([
+        'created',
+        'instruction_contract',
+        'queued',
+        'trace_policy',
+        'started',
+        'cancel_requested',
+        'cancel_confirmed',
+        'cancelled',
+      ]);
 
     workerResult.resolve({ success: true, responseText: 'late success' });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(managerService.getTask(scope, task.id)?.status).toBe('cancelled');
+  });
+
+  it('does not mark a running task cancelled when worker stop is not confirmed', async () => {
+    const workerResult = deferred<ApiTaskResult>();
+    const executeApiTask = vi.fn((_options: ApiTaskOptions) => workerResult.promise);
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    (worker.bridge.stopChatTask as any).mockReturnValue(false);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, { workerBotName: 'worker-a', prompt: 'slow work' });
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
+
+    expect(managerService.cancelTask(scope, task.id, 'stop failed')).toBe(false);
+    expect(managerService.getTask(scope, task.id)).toMatchObject({ status: 'running' });
+    const events = managerService.getTask(scope, task.id, { includeEvents: true })?.events ?? [];
+    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'cancel_requested',
+      'cancel_failed_to_stop',
+    ]));
+    expect(events.some((event) => event.type === 'cancelled')).toBe(false);
+
+    workerResult.resolve({ success: true, responseText: 'late success' });
+    await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
   });
 
   it('requeues interrupted tasks on startup', async () => {

@@ -108,4 +108,12 @@ describe('FeishuSenderAdapter.sendQuestionCard / updateQuestionCard', () => {
     const id = await adapter.sendQuestionCard('oc_test', questionState);
     expect(id).toBe('msg_specific');
   });
+
+  it('sendTextNotice throws when Feishu does not return a message id', async () => {
+    const { adapter, sendCard } = makeAdapter();
+    sendCard.mockResolvedValueOnce(undefined);
+
+    await expect(adapter.sendTextNotice('oc_test', 'Title', 'Body')).rejects
+      .toThrow('Failed to send Feishu text notice');
+  });
 });
