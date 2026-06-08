@@ -1,6 +1,6 @@
 import type * as http from 'node:http';
 import { WORKER_TASK_TEMPLATES, type WorkerTaskTemplate } from '../manager-worker-template.js';
-import type { ManagerScope } from '../manager-service.js';
+import type { CancelTaskOutcome, CancelTaskOutcomeStatus, ManagerScope } from '../manager-service.js';
 import { MANAGER_TASK_EVENT_TYPES, type ManagerTaskEventPayloadMode, type ManagerTaskEventType, type ManagerTaskStatus } from '../manager-store.js';
 import { runManagerToolSafely } from '../manager-tools.js';
 import type { RouteContext } from './types.js';
@@ -140,12 +140,12 @@ export async function handleManagerRoutes(
       const body = await parseJsonBody(req);
       const scope = scopeFromBody(body);
       const taskId = decodeURIComponent(cancelTaskMatch[1]);
-      const cancelled = service.cancelTask(scope, taskId, optionalString(body.reason) ?? 'Cancelled via manager API');
-      jsonResponse(
-        res,
-        cancelled ? 200 : 404,
-        cancelled ? { id: taskId, status: 'cancelled' } : { error: `Manager task not cancellable: ${taskId}` },
+      const outcome = service.cancelTaskDetailed(
+        scope,
+        taskId,
+        optionalString(body.reason) ?? 'Cancelled via manager API',
       );
+      jsonResponse(res, cancelOutcomeStatusCode(outcome.status), cancelOutcomeBody(outcome));
       return true;
     }
 
@@ -169,6 +169,7 @@ export async function handleManagerRoutes(
         timezone: optionalString(body.timezone),
         label: optionalString(body.label),
         sendCards: optionalBoolean(body.sendCards),
+        workflowId: optionalString(body.workflowId),
         traceId: optionalString(body.traceId),
         sideEffectClass: optionalSideEffectClass(body.sideEffectClass),
         idempotencyKey: optionalString(body.idempotencyKey),
@@ -204,6 +205,26 @@ export async function handleManagerRoutes(
   }
 
   return false;
+}
+
+function cancelOutcomeStatusCode(status: CancelTaskOutcomeStatus): number {
+  if (status === 'cancelled') return 200;
+  if (status === 'not_found') return 404;
+  return 409;
+}
+
+function cancelOutcomeBody(outcome: CancelTaskOutcome): Record<string, unknown> {
+  if (outcome.cancelled) return outcome as unknown as Record<string, unknown>;
+  return {
+    ...outcome,
+    error: cancelOutcomeError(outcome),
+  };
+}
+
+function cancelOutcomeError(outcome: CancelTaskOutcome): string {
+  if (outcome.status === 'cancel_failed_to_stop') return `Manager task stop not confirmed: ${outcome.taskId}`;
+  if (outcome.status === 'terminal') return `Manager task already terminal: ${outcome.taskId}`;
+  return `Manager task not found: ${outcome.taskId}`;
 }
 
 function scopeFromBody(body: Record<string, unknown>): ManagerScope {

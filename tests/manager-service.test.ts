@@ -1044,6 +1044,7 @@ describe('ManagerService', () => {
       prompt: 'Remember this',
       delaySeconds: 30,
       label: 'Reminder label',
+      workflowId: 'wf-reminder',
       traceId: 'trace-reminder',
     });
 
@@ -1057,11 +1058,13 @@ describe('ManagerService', () => {
       origin: 'manager-mcp',
       createdByBotName: 'manager',
       createdByChatId: 'chat-a',
+      workflowId: 'wf-reminder',
       traceId: 'trace-reminder',
       metadata: {
         origin: 'manager-mcp',
         createdByBotName: 'manager',
         createdByChatId: 'chat-a',
+        workflowId: 'wf-reminder',
         traceId: 'trace-reminder',
       },
     });
@@ -1097,6 +1100,7 @@ describe('ManagerService', () => {
       origin: 'manager-mcp',
       createdByBotName: 'manager',
       createdByChatId: 'chat-a',
+      workflowId: undefined,
       traceId: expect.stringMatching(/^trace-/),
     });
     expect(schedulerMocks.scheduler.scheduleRecurring).toHaveBeenCalledWith(expect.objectContaining({

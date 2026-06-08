@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Logger } from '../utils/logger.js';
-import type { ManagerScope, ManagerService } from './manager-service.js';
+import type { CancelTaskOutcome, ManagerScope, ManagerService } from './manager-service.js';
 import { MANAGER_TASK_EVENT_TYPES } from './manager-store.js';
 import { WORKER_TASK_TEMPLATES } from './manager-worker-template.js';
 
@@ -111,9 +111,9 @@ export const MANAGER_TOOL_SPECS: ManagerToolSpec[] = [
     description:
       'Stop a running/queued worker task by task ID. Alias for cancel_worker_task, named for manager-worker workflows.',
     inputSchema: { taskId: z.string().min(1), reason: z.string().optional() },
-    run: ({ service, scope, args }) => ({
-      stopped: service.cancelTask(scope, String(args.taskId), stringArg(args.reason) ?? 'Stopped by manager'),
-    }),
+    run: ({ service, scope, args }) => cancelToolResult(
+      service.cancelTaskDetailed(scope, String(args.taskId), stringArg(args.reason) ?? 'Stopped by manager'),
+    ),
   },
   {
     name: 'get_worker_task',
@@ -150,9 +150,9 @@ export const MANAGER_TOOL_SPECS: ManagerToolSpec[] = [
     description:
       'Cancel a queued or running delegated worker task. Running tasks are interrupted via the worker bridge when possible.',
     inputSchema: { taskId: z.string().min(1), reason: z.string().optional() },
-    run: ({ service, scope, args }) => ({
-      cancelled: service.cancelTask(scope, String(args.taskId), stringArg(args.reason)),
-    }),
+    run: ({ service, scope, args }) => cancelToolResult(
+      service.cancelTaskDetailed(scope, String(args.taskId), stringArg(args.reason)),
+    ),
   },
   {
     name: 'resume_worker_task',
@@ -172,6 +172,7 @@ export const MANAGER_TOOL_SPECS: ManagerToolSpec[] = [
       timezone: z.string().optional(),
       label: z.string().optional(),
       sendCards: z.boolean().optional(),
+      workflowId: z.string().optional(),
       traceId: z.string().optional(),
       sideEffectClass: sideEffectClass.optional(),
       idempotencyKey: z.string().optional(),
@@ -225,6 +226,13 @@ function wrapResult(result: unknown): Record<string, unknown> {
   return result && typeof result === 'object' && !Array.isArray(result)
     ? (result as Record<string, unknown>)
     : { result };
+}
+
+function cancelToolResult(outcome: CancelTaskOutcome): Record<string, unknown> {
+  return {
+    ...outcome,
+    stopped: outcome.stopped ?? outcome.cancelled,
+  };
 }
 
 function stringArg(value: unknown): string | undefined {

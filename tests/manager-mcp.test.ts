@@ -16,6 +16,7 @@ function service(): ManagerService {
     getTask: vi.fn(() => ({ id: 'mgrtask-1', traceId: 'trace-1', status: 'completed' })),
     listTasks: vi.fn(() => []),
     cancelTask: vi.fn(() => true),
+    cancelTaskDetailed: vi.fn(() => ({ taskId: 'mgrtask-1', cancelled: true, status: 'cancelled' })),
     resumeTask: vi.fn(() => ({ id: 'mgrtask-1', traceId: 'trace-1', status: 'queued' })),
     scheduleReminder: vi.fn(() => ({ id: 'sched-1', type: 'one-time', executeAt: Date.now() })),
     listReminders: vi.fn(() => []),

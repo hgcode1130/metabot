@@ -366,6 +366,7 @@ describe('TaskScheduler - Recurring Tasks', () => {
       origin: 'manager-mcp' as const,
       createdByBotName: 'manager',
       createdByChatId: 'chat-a',
+      workflowId: 'wf-schedule',
       traceId: 'trace-schedule',
       sideEffectClass: 'readOnly' as const,
       idempotencyKey: 'idem-1',
@@ -394,6 +395,7 @@ describe('TaskScheduler - Recurring Tasks', () => {
       origin: 'manager-mcp' as const,
       createdByBotName: 'manager',
       createdByChatId: 'chat-a',
+      workflowId: 'wf-old',
       traceId: 'trace-old',
     };
     fs.mkdirSync(PERSIST_DIR, { recursive: true });

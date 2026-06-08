@@ -23,6 +23,7 @@ export interface ScheduleMetadata {
   origin?: 'api' | 'manager-mcp' | 'cli';
   createdByBotName?: string;
   createdByChatId?: string;
+  workflowId?: string;
   traceId?: string;
   sideEffectClass?: SideEffectClass;
   idempotencyKey?: string;
@@ -763,6 +764,7 @@ function scheduleTraceFields(source: ScheduleMetadata & { metadata?: ScheduleMet
     origin: source.origin ?? source.metadata?.origin,
     createdByBotName: source.createdByBotName ?? source.metadata?.createdByBotName,
     createdByChatId: source.createdByChatId ?? source.metadata?.createdByChatId,
+    workflowId: source.workflowId ?? source.metadata?.workflowId,
     traceId: source.traceId ?? source.metadata?.traceId,
     sideEffectClass: source.sideEffectClass ?? source.metadata?.sideEffectClass,
     idempotencyKey: source.idempotencyKey ?? source.metadata?.idempotencyKey,

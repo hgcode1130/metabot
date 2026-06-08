@@ -119,9 +119,26 @@ export interface ScheduleReminderInput {
   timezone?: string;
   label?: string;
   sendCards?: boolean;
+  workflowId?: string;
   traceId?: string;
   sideEffectClass?: SideEffectClass;
   idempotencyKey?: string;
+}
+
+export type CancelTaskOutcomeStatus =
+  | 'cancelled'
+  | 'cancel_failed_to_stop'
+  | 'not_found'
+  | 'terminal';
+
+export interface CancelTaskOutcome {
+  taskId: string;
+  cancelled: boolean;
+  status: CancelTaskOutcomeStatus;
+  reason: string;
+  stopped?: boolean;
+  currentStatus?: ManagerTaskStatus;
+  workerBotName?: string;
 }
 
 export type ManagerReminder =
@@ -140,6 +157,7 @@ export type ManagerReminder =
       origin?: ScheduleMetadata['origin'];
       createdByBotName?: string;
       createdByChatId?: string;
+      workflowId?: string;
       traceId?: string;
       sideEffectClass?: SideEffectClass;
       idempotencyKey?: string;
@@ -166,6 +184,7 @@ export type ManagerReminder =
       origin?: ScheduleMetadata['origin'];
       createdByBotName?: string;
       createdByChatId?: string;
+      workflowId?: string;
       traceId?: string;
       sideEffectClass?: SideEffectClass;
       idempotencyKey?: string;
@@ -428,10 +447,18 @@ export class ManagerService {
   }
 
   cancelTask(scope: ManagerScope, taskId: string, reason = 'Cancelled by manager'): boolean {
+    return this.cancelTaskDetailed(scope, taskId, reason).cancelled;
+  }
+
+  cancelTaskDetailed(scope: ManagerScope, taskId: string, reason = 'Cancelled by manager'): CancelTaskOutcome {
     this.requireManager(scope);
     const task = this.store.getTask(taskId);
-    if (!task || !isTaskInScope(task, scope)) return false;
-    if (isTerminalStatus(task.status)) return false;
+    if (!task || !isTaskInScope(task, scope)) {
+      return { taskId, cancelled: false, status: 'not_found', reason };
+    }
+    if (isTerminalStatus(task.status)) {
+      return { taskId, cancelled: false, status: 'terminal', reason, currentStatus: task.status };
+    }
 
     this.store.appendEvent(task.id, 'cancel_requested', { reason });
 
@@ -441,7 +468,15 @@ export class ManagerService {
       stopped = worker?.bridge.stopChatTask(task.workerChatId) ?? false;
       if (!stopped) {
         this.store.appendEvent(task.id, 'cancel_failed_to_stop', { reason, workerBotName: task.workerBotName });
-        return false;
+        return {
+          taskId,
+          cancelled: false,
+          status: 'cancel_failed_to_stop',
+          reason,
+          stopped,
+          currentStatus: task.status,
+          workerBotName: task.workerBotName,
+        };
       }
     }
 
@@ -452,7 +487,7 @@ export class ManagerService {
     });
     this.store.appendEvent(task.id, 'cancel_confirmed', { reason, stopped });
     this.store.appendEvent(task.id, 'cancelled', { reason, stopped });
-    return true;
+    return { taskId, cancelled: true, status: 'cancelled', reason, stopped, currentStatus: 'cancelled' };
   }
 
   resumeTask(scope: ManagerScope, taskId: string): ManagerTask {
@@ -499,6 +534,7 @@ export class ManagerService {
       origin: 'manager-mcp',
       createdByBotName: scope.managerBotName,
       createdByChatId: scope.managerChatId,
+      ...(input.workflowId ? { workflowId: input.workflowId } : {}),
       traceId: input.traceId ?? `trace-${crypto.randomUUID()}`,
       ...(input.sideEffectClass ? { sideEffectClass: input.sideEffectClass } : {}),
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
@@ -1221,6 +1257,7 @@ function reminderTraceFields(reminder: (ScheduledTask | RecurringTask) & Schedul
     origin: reminder.origin ?? reminder.metadata?.origin,
     createdByBotName: reminder.createdByBotName ?? reminder.metadata?.createdByBotName,
     createdByChatId: reminder.createdByChatId ?? reminder.metadata?.createdByChatId,
+    workflowId: reminder.workflowId ?? reminder.metadata?.workflowId,
     traceId: reminder.traceId ?? reminder.metadata?.traceId,
     sideEffectClass: reminder.sideEffectClass ?? reminder.metadata?.sideEffectClass,
     idempotencyKey: reminder.idempotencyKey ?? reminder.metadata?.idempotencyKey,

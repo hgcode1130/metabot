@@ -74,6 +74,14 @@ function service() {
       events: [{ id: 'evt-1', taskId: 'mgrtask-1', type: 'completed', createdAt: 2 }],
     })),
     cancelTask: vi.fn(() => true),
+    cancelTaskDetailed: vi.fn(() => ({
+      taskId: 'mgrtask-1',
+      cancelled: true,
+      status: 'cancelled',
+      reason: 'Cancelled via manager API',
+      stopped: true,
+      currentStatus: 'cancelled',
+    })),
     resumeTask: vi.fn(() => ({
       id: 'mgrtask-1',
       traceId: 'trace-1',
@@ -283,6 +291,65 @@ describe('manager routes', () => {
     expect(svc.resumeTask).toHaveBeenCalledWith({ managerBotName: 'manager', managerChatId: 'chat-a' }, 'mgrtask-1');
   });
 
+  it('returns structured cancel outcomes for manager tasks', async () => {
+    const svc = service();
+    const out = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req({
+        managerBotName: 'manager',
+        managerChatId: 'chat-a',
+        reason: 'stop now',
+      }),
+      out,
+      'POST',
+      '/api/manager/tasks/mgrtask-1/cancel',
+    );
+    expect(out.statusCode).toBe(200);
+    expect(out.body).toMatchObject({
+      taskId: 'mgrtask-1',
+      cancelled: true,
+      status: 'cancelled',
+      stopped: true,
+    });
+    expect(svc.cancelTaskDetailed).toHaveBeenCalledWith(
+      { managerBotName: 'manager', managerChatId: 'chat-a' },
+      'mgrtask-1',
+      'stop now',
+    );
+  });
+
+  it('returns conflict when cancel cannot confirm worker stop', async () => {
+    const svc = service();
+    svc.cancelTaskDetailed.mockReturnValueOnce({
+      taskId: 'mgrtask-running',
+      cancelled: false,
+      status: 'cancel_failed_to_stop',
+      reason: 'stop now',
+      stopped: false,
+      currentStatus: 'running',
+      workerBotName: 'worker-a',
+    });
+    const out = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req({
+        managerBotName: 'manager',
+        managerChatId: 'chat-a',
+        reason: 'stop now',
+      }),
+      out,
+      'POST',
+      '/api/manager/tasks/mgrtask-running/cancel',
+    );
+    expect(out.statusCode).toBe(409);
+    expect(out.body).toMatchObject({
+      cancelled: false,
+      status: 'cancel_failed_to_stop',
+      error: expect.stringContaining('stop not confirmed'),
+    });
+  });
+
   it('schedules and cancels reminders', async () => {
     const svc = service();
     const createOut = res();
@@ -293,6 +360,7 @@ describe('manager routes', () => {
         managerChatId: 'chat-a',
         prompt: 'remember',
         delaySeconds: 60,
+        workflowId: 'wf-reminder',
       }),
       createOut,
       'POST',
@@ -300,6 +368,10 @@ describe('manager routes', () => {
     );
     expect(createOut.statusCode).toBe(201);
     expect(createOut.body.reminder.id).toBe('sched-1');
+    expect(svc.scheduleReminder).toHaveBeenCalledWith(
+      { managerBotName: 'manager', managerChatId: 'chat-a' },
+      expect.objectContaining({ workflowId: 'wf-reminder' }),
+    );
 
     const deleteOut = res();
     await handleManagerRoutes(
