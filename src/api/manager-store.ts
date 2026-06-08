@@ -96,6 +96,12 @@ export interface CreateManagerTaskInput {
   metadata?: Record<string, unknown>;
 }
 
+export interface RecoverInterruptedTasksResult {
+  requeued: ManagerTask[];
+  exhausted: ManagerTask[];
+  paused: ManagerTask[];
+}
+
 export interface ManagerTaskListFilter {
   managerBotName?: string;
   managerChatId?: string;
@@ -375,25 +381,29 @@ export class ManagerStore {
     return tasks.length;
   }
 
-  recoverInterruptedTasks(reason: string): { requeued: ManagerTask[]; exhausted: ManagerTask[] } {
+  recoverInterruptedTasks(reason: string): RecoverInterruptedTasksResult {
     const tasks = this.listInterruptedTasks();
-    if (tasks.length === 0) return { requeued: [], exhausted: [] };
+    if (tasks.length === 0) return { requeued: [], exhausted: [], paused: [] };
 
     const requeued: ManagerTask[] = [];
     const exhausted: ManagerTask[] = [];
+    const paused: ManagerTask[] = [];
     const recover = this.db.transaction(() => {
       for (const task of tasks) {
         if (task.attemptCount >= task.maxAttempts) {
           this.markTaskRetryExhausted(task, reason);
           exhausted.push(this.getTask(task.id) ?? task);
-        } else {
+        } else if (canAutoRecoverTask(task)) {
           this.requeueRecoveredTask(task, reason);
           requeued.push(this.getTask(task.id) ?? task);
+        } else {
+          this.pauseRecoveredTask(task, reason);
+          paused.push(this.getTask(task.id) ?? task);
         }
       }
     });
     recover();
-    return { requeued, exhausted };
+    return { requeued, exhausted, paused };
   }
 
   close(): void {
@@ -488,13 +498,28 @@ export class ManagerStore {
   private requeueRecoveredTask(task: ManagerTask, reason: string): void {
     const now = Date.now();
     const nextAttemptAt = task.nextAttemptAt && task.nextAttemptAt > now ? task.nextAttemptAt : now;
-    this.db.prepare(`
-      UPDATE manager_tasks
-      SET status = 'queued', updated_at = ?, next_attempt_at = ?, last_retry_reason = ?
-      WHERE id = ? AND status IN ('queued', 'running')
-    `).run(now, nextAttemptAt, reason, task.id);
+    this.updateTask(task.id, {
+      status: 'queued',
+      nextAttemptAt,
+      lastRetryReason: reason,
+      metadata: recoveryMetadata(task, reason, 'auto_resumed'),
+    });
     this.insertEvent(task.id, 'process_recovered', { reason });
     this.insertEvent(task.id, 'resume_queued', { reason });
+  }
+
+  private pauseRecoveredTask(task: ManagerTask, reason: string): void {
+    this.updateTask(task.id, {
+      status: 'failed',
+      completedAt: Date.now(),
+      error: 'Recovery paused: side-effect safety requires manager review',
+      lastRetryReason: reason,
+      metadata: recoveryMetadata(task, reason, 'needs_resume_review'),
+    });
+    const sideEffectClass = readSideEffectClass(task.metadata);
+    this.insertEvent(task.id, 'process_recovered', { reason });
+    this.insertEvent(task.id, 'retry_paused', { reason, sideEffectClass });
+    this.insertEvent(task.id, 'failed', { reason, sideEffectClass });
   }
 
   private listInterruptedTasks(): ManagerTask[] {
@@ -640,6 +665,31 @@ function safePathPart(value: string): string {
 
 function defaultDbPath(): string {
   return path.join(os.homedir(), '.metabot', 'manager.db');
+}
+
+function canAutoRecoverTask(task: Pick<ManagerTask, 'metadata'>): boolean {
+  const sideEffectClass = readSideEffectClass(task.metadata);
+  return sideEffectClass === 'none' || sideEffectClass === 'readOnly';
+}
+
+function recoveryMetadata(
+  task: Pick<ManagerTask, 'metadata'>,
+  reason: string,
+  recoveryStatus: 'auto_resumed' | 'needs_resume_review',
+): Record<string, unknown> {
+  return {
+    ...(task.metadata ?? {}),
+    retryResume: recoveryStatus === 'auto_resumed',
+    recoveryStatus,
+    recoveryReason: reason,
+    sideEffectClass: readSideEffectClass(task.metadata),
+  };
+}
+
+function readSideEffectClass(metadata: Record<string, unknown> | undefined): string {
+  const value = metadata?.sideEffectClass;
+  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  return 'unknown';
 }
 
 function parseJsonObject(value: string | null): Record<string, unknown> | undefined {

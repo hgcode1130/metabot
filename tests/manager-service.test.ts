@@ -1044,6 +1044,7 @@ describe('ManagerService', () => {
       workerBotName: 'worker-a',
       workerChatId: 'worker-chat',
       prompt: 'interrupted',
+      metadata: { sideEffectClass: 'readOnly' },
     });
 
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
@@ -1057,8 +1058,43 @@ describe('ManagerService', () => {
     expect(recoveredEvents).toContain('process_recovered');
     expect(recoveredEvents).toContain('resume_queued');
     await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
+    expect(executeApiTask.mock.calls[0][0].prompt).toContain('Resume instructions:');
     workerResult.resolve({ success: true, responseText: workerResultText('recovered') });
     await waitFor(() => expect(store.getTask(interrupted.id)?.status).toBe('completed'));
+  });
+
+  it('pauses unsafe interrupted tasks on startup instead of rerunning them', async () => {
+    const temp = createTempDbPath();
+    tmpDir = temp.dir;
+    store = new ManagerStore(createLogger(), { dbPath: temp.dbPath });
+    const interrupted = store.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker-a',
+      workerChatId: 'worker-chat',
+      prompt: 'external write',
+      metadata: { sideEffectClass: 'externalWrite' },
+    });
+
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const executeApiTask = vi.fn();
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    service = new ManagerService(createRegistry([manager, worker]), createScheduler().scheduler, createLogger(), { store });
+
+    expect(executeApiTask).not.toHaveBeenCalled();
+    expect(store.getTask(interrupted.id)).toMatchObject({
+      status: 'failed',
+      error: 'Recovery paused: side-effect safety requires manager review',
+      metadata: {
+        sideEffectClass: 'externalWrite',
+        recoveryStatus: 'needs_resume_review',
+      },
+    });
+    expect(store.listEvents(interrupted.id).map((event) => event.type)).toEqual(expect.arrayContaining([
+      'process_recovered',
+      'retry_paused',
+      'failed',
+    ]));
   });
 
   it('does not run recovered retry tasks before nextAttemptAt', async () => {
@@ -1072,7 +1108,7 @@ describe('ManagerService', () => {
       workerBotName: 'worker-a',
       workerChatId: 'worker-chat',
       prompt: 'retry later',
-      metadata: { sendCards: false },
+      metadata: { sendCards: false, sideEffectClass: 'readOnly' },
     });
     store.updateTask(retry.id, {
       status: 'queued',

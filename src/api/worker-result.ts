@@ -32,12 +32,22 @@ export type WorkerResultParseResult =
 
 const FENCED_RESULT_RE = /```(?:json)?[^\n`]*METABOT_WORKER_RESULT[^\n`]*\n([\s\S]*?)```/i;
 const MARKER_RESULT_RE = /METABOT_WORKER_RESULT\s*({[\s\S]*})/i;
+const REQUIRED_ARRAY_FIELDS = [
+  'actionsTaken',
+  'commands',
+  'files',
+  'artifacts',
+  'verification',
+  'risks',
+] as const;
 
 export function parseWorkerResult(text: string | undefined): WorkerResultParseResult {
   const jsonText = extractWorkerResultJson(text);
   if (!jsonText) return { ok: false, error: 'METABOT_WORKER_RESULT block not found' };
   try {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    const schemaError = validateWorkerResultShape(parsed);
+    if (schemaError) return { ok: false, error: schemaError };
     return { ok: true, result: normalizeWorkerResult(parsed) };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'invalid JSON';
@@ -91,6 +101,31 @@ function normalizeWorkerResult(value: Record<string, unknown>): WorkerResult {
     risks: readStringArray(value.risks),
     nextAction: readString(value.nextAction),
   };
+}
+
+function validateWorkerResultShape(value: Record<string, unknown>): string | undefined {
+  if (!readString(value.summary)) return 'METABOT_WORKER_RESULT.summary must be a non-empty string';
+  for (const field of REQUIRED_ARRAY_FIELDS) {
+    if (!Array.isArray(value[field])) return `METABOT_WORKER_RESULT.${field} must be an array`;
+  }
+  if (value.nextAction !== undefined && typeof value.nextAction !== 'string') {
+    return 'METABOT_WORKER_RESULT.nextAction must be a string when present';
+  }
+  return validateVerificationShape(value.verification);
+}
+
+function validateVerificationShape(value: unknown): string | undefined {
+  if (!Array.isArray(value)) return 'METABOT_WORKER_RESULT.verification must be an array';
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return 'METABOT_WORKER_RESULT.verification items must be objects';
+    }
+    const status = (item as Record<string, unknown>).status;
+    if (status !== 'passed' && status !== 'failed' && status !== 'not_run') {
+      return 'METABOT_WORKER_RESULT.verification.status must be passed, failed, or not_run';
+    }
+  }
+  return undefined;
 }
 
 function readArtifacts(value: unknown): WorkerArtifact[] {

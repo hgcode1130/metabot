@@ -88,6 +88,9 @@ function taskSubstatus(task: ManagerTask): string {
   if (task.status === 'queued' && task.nextAttemptAt && task.nextAttemptAt > Date.now()) return 'retrying';
   if (task.status === 'queued' && task.lastRetryReason) return 'retry_queued';
   if (task.status === 'queued' && task.metadata?.resumeRequestedAt) return 'resuming';
+  if (task.status === 'failed' && task.metadata?.recoveryStatus === 'needs_resume_review') {
+    return 'needs_resume_review';
+  }
   if (task.status === 'failed' && task.metadata?.workerResultError) return 'result_invalid';
   return task.status;
 }

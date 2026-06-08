@@ -281,19 +281,57 @@ describe('ManagerStore', () => {
       workerBotName: 'worker',
       workerChatId: 'chat-worker',
       prompt: 'recover',
+      metadata: { sideEffectClass: 'readOnly' },
     });
     managerStore.updateTask(task.id, { status: 'running', startedAt: Date.now() });
 
     const recovered = managerStore.recoverInterruptedTasks('restart');
 
     expect(recovered.requeued.map((item) => item.id)).toContain(task.id);
+    expect(recovered.paused).toEqual([]);
     expect(managerStore.getTask(task.id)).toMatchObject({
       status: 'queued',
       lastRetryReason: 'restart',
+      metadata: {
+        sideEffectClass: 'readOnly',
+        retryResume: true,
+        recoveryStatus: 'auto_resumed',
+      },
     });
     expect(managerStore.listEvents(task.id).map((event) => event.type)).toEqual(expect.arrayContaining([
       'process_recovered',
       'resume_queued',
+    ]));
+  });
+
+  it('pauses interrupted tasks that need side-effect recovery review', () => {
+    const managerStore = createStore();
+    const task = managerStore.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker',
+      workerChatId: 'chat-worker',
+      prompt: 'external write',
+      metadata: { sideEffectClass: 'externalWrite' },
+    });
+    managerStore.updateTask(task.id, { status: 'running', startedAt: Date.now() });
+
+    const recovered = managerStore.recoverInterruptedTasks('restart');
+
+    expect(recovered.requeued).toEqual([]);
+    expect(recovered.paused.map((item) => item.id)).toContain(task.id);
+    expect(managerStore.getTask(task.id)).toMatchObject({
+      status: 'failed',
+      lastRetryReason: 'restart',
+      metadata: {
+        sideEffectClass: 'externalWrite',
+        recoveryStatus: 'needs_resume_review',
+      },
+    });
+    expect(managerStore.listEvents(task.id).map((event) => event.type)).toEqual(expect.arrayContaining([
+      'process_recovered',
+      'retry_paused',
+      'failed',
     ]));
   });
 });

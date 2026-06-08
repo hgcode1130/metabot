@@ -49,6 +49,28 @@ describe('worker result parser', () => {
     expect(parseWorkerResult('METABOT_WORKER_RESULT {bad json').ok).toBe(false);
   });
 
+  it('rejects result blocks that omit required trace fields', () => {
+    const parsed = parseWorkerResult([
+      'Done.',
+      '',
+      '```json METABOT_WORKER_RESULT',
+      '{',
+      '  "summary": "done",',
+      '  "actionsTaken": [],',
+      '  "commands": [],',
+      '  "files": [],',
+      '  "artifacts": [],',
+      '  "risks": []',
+      '}',
+      '```',
+    ].join('\n'));
+
+    expect(parsed).toEqual({
+      ok: false,
+      error: 'METABOT_WORKER_RESULT.verification must be an array',
+    });
+  });
+
   it('builds an acceptance report without pretending deterministic verification', () => {
     const parsed = parseWorkerResult(resultBlock());
     const report = buildAcceptanceReport(['tests pass'], parsed);

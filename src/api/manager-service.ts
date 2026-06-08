@@ -608,9 +608,9 @@ export class ManagerService {
     for (const task of recovered.requeued) {
       this.enqueueRecoveredTask(task);
     }
-    if (recovered.requeued.length > 0 || recovered.exhausted.length > 0) {
+    if (recovered.requeued.length > 0 || recovered.exhausted.length > 0 || recovered.paused.length > 0) {
       this.logger.warn(
-        { requeued: recovered.requeued.length, exhausted: recovered.exhausted.length },
+        { requeued: recovered.requeued.length, exhausted: recovered.exhausted.length, paused: recovered.paused.length },
         'Recovered interrupted manager tasks',
       );
     }
