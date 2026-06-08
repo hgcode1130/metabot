@@ -156,18 +156,29 @@ type EventRow = {
 const DEFAULT_EVENT_LIMIT = 200;
 const MAX_EVENT_LIMIT = 1000;
 const EVENT_PAYLOAD_PREVIEW_CHARS = 2000;
+const DEFAULT_INLINE_EVENT_PAYLOAD_BYTES = 16 * 1024;
+const EVENT_PAYLOAD_ARCHIVE_DIR = 'manager-event-payloads';
+const EVENT_PAYLOAD_ARCHIVE_VERSION = 1;
 
 export interface ManagerStoreOptions {
   dbPath?: string;
+  eventPayloadArchiveDir?: string;
+  maxInlineEventPayloadBytes?: number;
 }
 
 export class ManagerStore {
   private db: Database.Database;
   private logger: Logger;
+  private eventPayloadArchiveDir: string;
+  private maxInlineEventPayloadBytes: number;
 
   constructor(logger: Logger, options: ManagerStoreOptions = {}) {
     this.logger = logger.child({ module: 'manager-store' });
     const dbPath = options.dbPath ?? defaultDbPath();
+    this.eventPayloadArchiveDir = options.eventPayloadArchiveDir
+      ?? path.join(path.dirname(dbPath), EVENT_PAYLOAD_ARCHIVE_DIR);
+    this.maxInlineEventPayloadBytes = options.maxInlineEventPayloadBytes
+      ?? DEFAULT_INLINE_EVENT_PAYLOAD_BYTES;
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
@@ -498,6 +509,7 @@ export class ManagerStore {
       payload,
       createdAt: Date.now(),
     };
+    const payloadJson = this.storedEventPayloadJson(event, payload);
     this.db.prepare(`
       INSERT INTO manager_task_events (id, task_id, type, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?)
@@ -505,10 +517,29 @@ export class ManagerStore {
       event.id,
       event.taskId,
       event.type,
-      event.payload ? JSON.stringify(event.payload) : null,
+      payloadJson,
       event.createdAt,
     );
     return event;
+  }
+
+  private storedEventPayloadJson(
+    event: Pick<ManagerTaskEvent, 'id' | 'taskId'>,
+    payload?: Record<string, unknown>,
+  ): string | null {
+    if (!payload) return null;
+    const serialized = JSON.stringify(payload);
+    if (Buffer.byteLength(serialized, 'utf8') <= this.maxInlineEventPayloadBytes) return serialized;
+    const archiveRef = this.writeEventPayloadArchive(event, serialized);
+    return JSON.stringify(archivedPayloadSummary(serialized, archiveRef));
+  }
+
+  private writeEventPayloadArchive(event: Pick<ManagerTaskEvent, 'id' | 'taskId'>, serialized: string): string {
+    const dir = path.join(this.eventPayloadArchiveDir, safePathPart(event.taskId));
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${safePathPart(event.id)}.json`);
+    fs.writeFileSync(filePath, serialized, 'utf8');
+    return path.relative(this.eventPayloadArchiveDir, filePath);
   }
 
   private rowToTask(row: TaskRow): ManagerTask {
@@ -544,7 +575,7 @@ export class ManagerStore {
       id: row.id,
       taskId: row.task_id,
       type: row.type,
-      payload: eventPayload(row.payload_json, payloadMode),
+      payload: eventPayload(row.payload_json, payloadMode, this.eventPayloadArchiveDir),
       createdAt: row.created_at,
     };
   }
@@ -555,9 +586,15 @@ function normalizeEventLimit(limit: number | undefined): number {
   return Math.min(Math.max(Math.floor(limit), 1), MAX_EVENT_LIMIT);
 }
 
-function eventPayload(value: string | null, mode: ManagerTaskEventPayloadMode): Record<string, unknown> | undefined {
+function eventPayload(
+  value: string | null,
+  mode: ManagerTaskEventPayloadMode,
+  archiveDir: string,
+): Record<string, unknown> | undefined {
   const parsed = parseJsonObject(value);
-  if (!parsed || mode === 'full') return parsed;
+  if (!parsed) return undefined;
+  if (mode === 'full') return fullEventPayload(parsed, archiveDir);
+  if (isArchivedPayloadSummary(parsed)) return parsed;
   const serialized = JSON.stringify(parsed);
   if (serialized.length <= EVENT_PAYLOAD_PREVIEW_CHARS) return parsed;
   return {
@@ -565,6 +602,37 @@ function eventPayload(value: string | null, mode: ManagerTaskEventPayloadMode): 
     truncated: true,
     originalLength: serialized.length,
   };
+}
+
+function fullEventPayload(payload: Record<string, unknown>, archiveDir: string): Record<string, unknown> {
+  if (!isArchivedPayloadSummary(payload)) return payload;
+  const archivePath = path.join(archiveDir, payload.archiveRef);
+  const archived = fs.readFileSync(archivePath, 'utf8');
+  return parseJsonObject(archived) ?? failInvalidArchivedPayload(archivePath);
+}
+
+function archivedPayloadSummary(serialized: string, archiveRef: string): Record<string, unknown> {
+  return {
+    payloadArchiveVersion: EVENT_PAYLOAD_ARCHIVE_VERSION,
+    payloadArchived: true,
+    archiveRef,
+    sha256: crypto.createHash('sha256').update(serialized).digest('hex'),
+    originalLength: serialized.length,
+    originalBytes: Buffer.byteLength(serialized, 'utf8'),
+    preview: serialized.slice(0, EVENT_PAYLOAD_PREVIEW_CHARS),
+  };
+}
+
+function isArchivedPayloadSummary(payload: Record<string, unknown>): payload is Record<string, unknown> & { archiveRef: string } {
+  return payload.payloadArchived === true && typeof payload.archiveRef === 'string';
+}
+
+function failInvalidArchivedPayload(archivePath: string): never {
+  throw new Error(`Invalid archived manager event payload: ${archivePath}`);
+}
+
+function safePathPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
 function defaultDbPath(): string {

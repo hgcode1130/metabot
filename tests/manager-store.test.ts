@@ -154,6 +154,38 @@ describe('ManagerStore', () => {
     });
   });
 
+  it('archives oversized event payloads outside the manager event table', () => {
+    const temp = createTempDbPath();
+    tmpDir = temp.dir;
+    const archiveDir = path.join(temp.dir, 'event-payloads');
+    store = new ManagerStore(createLogger(), {
+      dbPath: temp.dbPath,
+      eventPayloadArchiveDir: archiveDir,
+      maxInlineEventPayloadBytes: 128,
+    });
+    const task = store.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker',
+      workerChatId: 'manager-worker-abc',
+      prompt: 'Do work',
+    });
+    const responseText = 'x'.repeat(2048);
+
+    store.appendEvent(task.id, 'worker_update', { responseText, status: 'running' });
+
+    const preview = store.listEvents(task.id, { type: 'worker_update', payload: 'preview' })[0];
+    expect(preview.payload).toMatchObject({
+      payloadArchived: true,
+      archiveRef: expect.any(String),
+      sha256: expect.any(String),
+      originalBytes: expect.any(Number),
+    });
+    expect(fs.existsSync(path.join(archiveDir, String(preview.payload?.archiveRef)))).toBe(true);
+    const full = store.listEvents(task.id, { type: 'worker_update', payload: 'full' })[0];
+    expect(full.payload).toEqual({ responseText, status: 'running' });
+  });
+
   it('lists tasks by manager scope, status, worker, and limit', () => {
     const managerStore = createStore();
     const first = managerStore.createTask({
