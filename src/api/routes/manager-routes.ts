@@ -98,6 +98,32 @@ export async function handleManagerRoutes(
       return true;
     }
 
+    const workflowSummaryMatch = path.match(/^\/api\/manager\/workflows\/([^/]+)\/summary$/);
+    if (method === 'GET' && workflowSummaryMatch) {
+      const scope = scopeFromSearch(parsedUrl);
+      const workflowId = decodeURIComponent(workflowSummaryMatch[1]);
+      const summary = service.getWorkflowSummary(scope, workflowId);
+      if (!summary) {
+        jsonResponse(res, 404, { error: `Manager workflow not found: ${workflowId}` });
+        return true;
+      }
+      jsonResponse(res, 200, { summary });
+      return true;
+    }
+
+    const taskSummaryMatch = path.match(/^\/api\/manager\/tasks\/([^/]+)\/summary$/);
+    if (method === 'GET' && taskSummaryMatch) {
+      const scope = scopeFromSearch(parsedUrl);
+      const taskId = decodeURIComponent(taskSummaryMatch[1]);
+      const summary = service.getTaskSummary(scope, taskId);
+      if (!summary) {
+        jsonResponse(res, 404, { error: `Manager task not found: ${taskId}` });
+        return true;
+      }
+      jsonResponse(res, 200, { summary });
+      return true;
+    }
+
     const eventsMatch = path.match(/^\/api\/manager\/tasks\/([^/]+)\/events$/);
     if (method === 'GET' && eventsMatch) {
       const scope = scopeFromSearch(parsedUrl);

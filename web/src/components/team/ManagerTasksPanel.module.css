@@ -224,6 +224,40 @@
   word-break: break-word;
 }
 
+.workLog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-sm);
+}
+
+.workLogStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workLogStats span {
+  padding: 3px 7px;
+  color: var(--text-2);
+  background: var(--surface-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-sm);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.warning {
+  padding: 7px 8px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-radius: var(--r-sm);
+  font-size: 11px;
+}
+
 .error {
   padding: 9px 10px;
   color: var(--red);

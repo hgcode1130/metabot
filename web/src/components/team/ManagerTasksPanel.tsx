@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BotStatus } from '../../store';
 import { useStore } from '../../store';
-import type { ManagerTask, ManagerTaskEvent } from '../../types';
+import type { ManagerTask, ManagerTaskEvent, ManagerTaskSummary } from '../../types';
 import { ManagerTaskActions, type ManagerTaskAction } from './ManagerTaskActions';
+import { ManagerWorkLog } from './ManagerWorkLog';
 import s from './ManagerTasksPanel.module.css';
 
 const TASK_LIMIT = 12;
@@ -11,6 +12,7 @@ const POLL_MS = 5000;
 const EVENT_FILTERS = [
   { label: 'All', value: '' },
   { label: 'Result', value: 'worker_result' },
+  { label: 'Budget', value: 'delegation_budget' },
   { label: 'Checkpoint', value: 'checkpoint' },
   { label: 'Update', value: 'worker_update' },
   { label: 'Failed', value: 'failed' },
@@ -32,12 +34,15 @@ export function ManagerTasksPanel({ bot }: Props) {
   const [tasks, setTasks] = useState<ManagerTask[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [events, setEvents] = useState<ManagerTaskEvent[]>([]);
+  const [summary, setSummary] = useState<ManagerTaskSummary | undefined>();
   const [eventFilter, setEventFilter] = useState<EventFilter>('');
   const [loading, setLoading] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [actionTaskId, setActionTaskId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [eventsError, setEventsError] = useState('');
+  const [summaryError, setSummaryError] = useState('');
   const activeBotRef = useRef(bot.name);
   const activeTaskRef = useRef<string | null>(null);
 
@@ -96,6 +101,31 @@ export function ManagerTasksPanel({ bot }: Props) {
     }
   }, [token]);
 
+  const loadSummary = useCallback(async (task: ManagerTask) => {
+    if (!token) return;
+    const requestTaskId = task.id;
+    setSummaryLoading(true);
+    try {
+      const params = new URLSearchParams({
+        managerBotName: task.managerBotName,
+        managerChatId: task.managerChatId,
+      });
+      const res = await fetch(`/api/manager/tasks/${encodeURIComponent(task.id)}/summary?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(await responseError(res));
+      const data = await res.json() as { summary?: ManagerTaskSummary };
+      if (activeTaskRef.current !== requestTaskId) return;
+      setSummary(data.summary);
+      setSummaryError('');
+    } catch (err) {
+      if (activeTaskRef.current !== requestTaskId) return;
+      setSummaryError(err instanceof Error ? err.message : 'Failed to load work log');
+    } finally {
+      if (activeTaskRef.current === requestTaskId) setSummaryLoading(false);
+    }
+  }, [token]);
+
   const runTaskAction = useCallback(async (task: ManagerTask, action: ManagerTaskAction) => {
     if (!token) return;
     setActionTaskId(task.id);
@@ -125,9 +155,11 @@ export function ManagerTasksPanel({ bot }: Props) {
     setTasks([]);
     setSelectedId(null);
     setEvents([]);
+    setSummary(undefined);
     setEventFilter('');
     setError('');
     setEventsError('');
+    setSummaryError('');
   }, [bot.name]);
 
   useEffect(() => {
@@ -140,9 +172,14 @@ export function ManagerTasksPanel({ bot }: Props) {
   useEffect(() => {
     activeTaskRef.current = selectedTaskId;
     setEvents([]);
+    setSummary(undefined);
     setEventsError('');
-    if (selectedTask) void loadEvents(selectedTask, eventFilter);
-  }, [eventFilter, loadEvents, selectedTaskId]);
+    setSummaryError('');
+    if (selectedTask) {
+      void loadEvents(selectedTask, eventFilter);
+      void loadSummary(selectedTask);
+    }
+  }, [eventFilter, loadEvents, loadSummary, selectedTaskId]);
 
   useEffect(() => {
     if (!selectedTask || !isActiveTask(selectedTask)) return undefined;
@@ -156,10 +193,10 @@ export function ManagerTasksPanel({ bot }: Props) {
     <section className={s.panel}>
       <div className={s.header}>
         <div>
-          <h3 className={s.title}>Worker Tasks</h3>
+          <h3 className={s.title}>MetaBot Worker Tasks</h3>
           <span className={s.subtitle}>{tasks.length} recent</span>
         </div>
-        <button className={s.iconButton} onClick={() => { void loadTasks(); }} title="Refresh worker tasks" aria-label="Refresh worker tasks">
+        <button className={s.iconButton} onClick={() => { void loadTasks(); }} title="Refresh MetaBot worker tasks" aria-label="Refresh MetaBot worker tasks">
           <RefreshIcon />
         </button>
       </div>
@@ -206,6 +243,7 @@ export function ManagerTasksPanel({ bot }: Props) {
             <pre className={s.payload}>{payloadPreview({ preview: selectedTask.lastCheckpointPreview })}</pre>
           )}
           {selectedTask.error && <div className={s.error}>{selectedTask.error}</div>}
+          <ManagerWorkLog summary={summary} loading={summaryLoading} error={summaryError} />
           <div className={s.filters}>
             {EVENT_FILTERS.map((filter) => (
               <button

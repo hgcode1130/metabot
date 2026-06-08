@@ -82,6 +82,24 @@ function service() {
       updatedAt: 2,
       events: [{ id: 'evt-1', taskId: 'mgrtask-1', type: 'completed', createdAt: 2 }],
     })),
+    getTaskSummary: vi.fn(() => ({
+      taskId: 'mgrtask-1',
+      traceId: 'trace-1',
+      status: 'completed',
+      substatus: 'completed',
+      workerBotName: 'worker-a',
+      summaryMarkdown: '## 完成情况',
+      traceCoverage: { unsupportedClaim: false },
+    })),
+    getWorkflowSummary: vi.fn(() => ({
+      workflowId: 'wf-1',
+      workerCount: 1,
+      cancelledWorkers: 0,
+      actualCostUsd: 0.1,
+      summaryMarkdown: '## Worker trace',
+      traceCoverage: { unsupportedClaims: 0 },
+      tasks: [],
+    })),
     cancelTask: vi.fn(() => true),
     cancelTaskDetailed: vi.fn(() => ({
       taskId: 'mgrtask-1',
@@ -240,6 +258,39 @@ describe('manager routes', () => {
       status: 'running',
       limit: 20,
     });
+  });
+
+  it('returns task and workflow work log summaries', async () => {
+    const svc = service();
+    const taskOut = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req(),
+      taskOut,
+      'GET',
+      '/api/manager/tasks/mgrtask-1/summary?managerBotName=manager&managerChatId=chat-a',
+    );
+    expect(taskOut.statusCode).toBe(200);
+    expect(taskOut.body.summary.summaryMarkdown).toContain('完成情况');
+    expect(svc.getTaskSummary).toHaveBeenCalledWith(
+      { managerBotName: 'manager', managerChatId: 'chat-a' },
+      'mgrtask-1',
+    );
+
+    const workflowOut = res();
+    await handleManagerRoutes(
+      ctx(svc),
+      req(),
+      workflowOut,
+      'GET',
+      '/api/manager/workflows/wf-1/summary?managerBotName=manager&managerChatId=chat-a',
+    );
+    expect(workflowOut.statusCode).toBe(200);
+    expect(workflowOut.body.summary.workerCount).toBe(1);
+    expect(svc.getWorkflowSummary).toHaveBeenCalledWith(
+      { managerBotName: 'manager', managerChatId: 'chat-a' },
+      'wf-1',
+    );
   });
 
   it('gets filtered task events with bounded preview options', async () => {

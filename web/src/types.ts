@@ -226,6 +226,34 @@ export interface ManagerTaskEvent {
   createdAt: string;
 }
 
+export interface ManagerTaskSummary {
+  taskId: string;
+  traceId: string;
+  workflowId?: string;
+  status: ManagerTaskStatus;
+  substatus: string;
+  workerBotName: string;
+  taskTemplate?: string;
+  sideEffectClass?: string;
+  summaryMarkdown: string;
+  traceCoverage: {
+    traceCoverageRate: number;
+    unsupportedClaim: boolean;
+    unsupportedClaims?: number;
+  };
+  evidence: {
+    files: string[];
+    commands: string[];
+    artifacts: unknown[];
+    eventTypes: string[];
+  };
+  verification: {
+    performed: unknown[];
+    notRun: unknown[];
+  };
+  risks: string[];
+}
+
 /* --- WebSocket messages --- */
 
 export type WSIncomingMessage =

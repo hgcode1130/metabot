@@ -15,5 +15,8 @@ describe('buildManagerWorkerGuidance', () => {
     expect(guidance).toContain('taskTemplate');
     expect(guidance).toContain('sessionKey');
     expect(guidance).toContain('Do not create complex swarms');
+    expect(guidance).toContain('Default delegation budget');
+    expect(guidance).toContain('get_worker_task_summary');
+    expect(guidance).toContain('Claude Agent Team/Subagent');
   });
 });

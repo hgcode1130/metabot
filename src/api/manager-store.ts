@@ -10,6 +10,7 @@ export type ManagerTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 
 export const MANAGER_TASK_EVENT_TYPES = [
   'created',
   'instruction_contract',
+  'delegation_budget',
   'trace_policy',
   'queued',
   'started',

@@ -15,6 +15,8 @@ export const MANAGER_TOOL_NAMES = [
   'send_worker_prompt',
   'stop_worker',
   'get_worker_task',
+  'get_worker_task_summary',
+  'get_workflow_summary',
   'list_worker_tasks',
   'cancel_worker_task',
   'resume_worker_task',
@@ -133,6 +135,24 @@ export const MANAGER_TOOL_SPECS: ManagerToolSpec[] = [
         eventPayload: eventPayloadArg(args.eventPayload) ?? 'preview',
       }) ?? {
         error: `Manager task not found: ${String(args.taskId)}`,
+      },
+  },
+  {
+    name: 'get_worker_task_summary',
+    description: 'Get a user-readable Manager Work Log summary for one delegated worker task.',
+    inputSchema: { taskId: z.string().min(1) },
+    run: ({ service, scope, args }) =>
+      service.getTaskSummary(scope, String(args.taskId)) ?? {
+        error: `Manager task not found: ${String(args.taskId)}`,
+      },
+  },
+  {
+    name: 'get_workflow_summary',
+    description: 'Get a user-readable Manager Work Log summary for one workflowId in this manager chat.',
+    inputSchema: { workflowId: z.string().min(1) },
+    run: ({ service, scope, args }) =>
+      service.getWorkflowSummary(scope, String(args.workflowId)) ?? {
+        error: `Manager workflow not found: ${String(args.workflowId)}`,
       },
   },
   {

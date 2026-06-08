@@ -50,6 +50,16 @@ import {
   resolveManagerTracePolicy,
   type ManagerTracePolicy,
 } from './manager-trace-policy.js';
+import {
+  resolveDelegationBudget,
+  workflowTasks,
+} from './manager-delegation-budget.js';
+import {
+  buildTaskWorkLog,
+  buildWorkflowWorkLog,
+  type ManagerTaskWorkLog,
+  type ManagerWorkflowWorkLog,
+} from './manager-work-log.js';
 import { resolveEngineName } from '../engines/index.js';
 
 export interface ManagerScope {
@@ -291,6 +301,13 @@ export class ManagerService {
     const workerChatId = buildWorkerChatId(scope, worker.name, input.sessionKey);
     const taskTemplate = normalizeWorkerTaskTemplate(input.taskTemplate);
     const tracePolicy = this.tracePolicy;
+    const delegationBudget = resolveDelegationBudget({
+      scope,
+      workflowId: input.workflowId,
+      taskTemplate,
+      metadata: input.metadata,
+      existingWorkflowTasks: this.existingWorkflowTasks(scope, input.workflowId),
+    });
     const contract = buildInstructionContract({
       prompt: input.prompt,
       metadata: {
@@ -314,6 +331,7 @@ export class ManagerService {
         taskTemplate,
         outputContractVersion: WORKER_TASK_OUTPUT_CONTRACT_VERSION,
         instructionContract: contractMetadata(contract),
+        delegationBudget,
         tracePolicy,
         sendCards: input.sendCards ?? false,
         sideEffectClass: contract.sideEffectClass,
@@ -323,6 +341,7 @@ export class ManagerService {
       },
     });
     this.store.appendEvent(task.id, 'instruction_contract', contractMetadata(contract));
+    this.store.appendEvent(task.id, 'delegation_budget', { ...delegationBudget });
     this.store.appendEvent(task.id, 'queued', { workerChatId });
     this.store.appendEvent(task.id, 'trace_policy', { ...managerTracePolicyMetadata(tracePolicy) });
 
@@ -429,6 +448,25 @@ export class ManagerService {
         payload: options.eventPayload ?? 'preview',
       }),
     };
+  }
+
+  getTaskSummary(scope: ManagerScope, taskId: string): ManagerTaskWorkLog | undefined {
+    this.requireManager(scope);
+    const task = this.store.getTask(taskId);
+    if (!task || !isTaskInScope(task, scope)) return undefined;
+    const events = this.store.listEvents(task.id, { limit: 200, payload: 'preview' });
+    return buildTaskWorkLog(task, events);
+  }
+
+  getWorkflowSummary(scope: ManagerScope, workflowId: string): ManagerWorkflowWorkLog | undefined {
+    this.requireManager(scope);
+    const tasks = this.existingWorkflowTasks(scope, workflowId);
+    if (tasks.length === 0) return undefined;
+    const eventsByTaskId = new Map(tasks.map((task) => [
+      task.id,
+      this.store.listEvents(task.id, { limit: 200, payload: 'preview' }),
+    ]));
+    return buildWorkflowWorkLog(workflowId, tasks, eventsByTaskId);
   }
 
   listTasks(scope: ManagerScope, filter: ListTasksFilter = {}): ManagerTask[] {
@@ -761,6 +799,15 @@ export class ManagerService {
       status: 'running',
       limit: 100,
     }).find((task) => task.workerChatId === workerChatId);
+  }
+
+  private existingWorkflowTasks(scope: ManagerScope, workflowId: string | undefined): ManagerTask[] {
+    const tasks = this.store.listTasks({
+      managerBotName: scope.managerBotName,
+      managerChatId: scope.managerChatId,
+      limit: 500,
+    });
+    return workflowTasks(tasks, scope, workflowId);
   }
 
   private async runTask(taskId: string, sendCards: boolean): Promise<void> {

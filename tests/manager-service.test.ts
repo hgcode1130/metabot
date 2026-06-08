@@ -343,6 +343,11 @@ describe('ManagerService', () => {
       sessionKey: 'default',
       taskTemplate: 'general',
       outputContractVersion: expect.any(String),
+      delegationBudget: expect.objectContaining({
+        policyVersion: expect.any(String),
+        workerCount: 1,
+        maxWorkers: 2,
+      }),
       instructionContract: expect.objectContaining({
         forbiddenActions: [],
         sideEffectClass: 'unknown',
@@ -366,9 +371,10 @@ describe('ManagerService', () => {
       .toContain('manager_notified'));
     const details = managerService.getTask(scope, task.id, { includeEvents: true });
     const eventTypes = details?.events?.map((event) => event.type) ?? [];
-    expect(eventTypes.slice(0, 7)).toEqual([
+    expect(eventTypes.slice(0, 8)).toEqual([
       'created',
       'instruction_contract',
+      'delegation_budget',
       'queued',
       'trace_policy',
       'started',
@@ -378,6 +384,7 @@ describe('ManagerService', () => {
     expect(eventTypes).toEqual(expect.arrayContaining([
       'worker_update',
       'trace_policy',
+      'delegation_budget',
       'worker_result',
       'acceptance_report',
       'completed',
@@ -579,6 +586,84 @@ describe('ManagerService', () => {
     expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Side effects: readOnly');
     expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Acceptance: worker_reported');
     expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Summary: P0-P1 completed');
+  });
+
+  it('returns task and workflow work logs with trace coverage', async () => {
+    const responseText = [
+      'Implementation complete.',
+      '',
+      '```json METABOT_WORKER_RESULT',
+      '{',
+      '  "summary": "completed work",',
+      '  "actionsTaken": ["inspected implementation"],',
+      '  "commands": ["npm test"],',
+      '  "files": ["src/api/manager-service.ts"],',
+      '  "artifacts": [],',
+      '  "verification": [{"command":"npm test","status":"passed","details":"ok"}],',
+      '  "risks": [],',
+      '  "nextAction": "manager summarize"',
+      '}',
+      '```',
+    ].join('\n');
+    const executeApiTask = vi.fn(async (): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText,
+      costUsd: 0.2,
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'Work with a workflow',
+      workflowId: 'wf-worklog',
+      waitTimeoutSeconds: 1,
+    });
+
+    const taskLog = managerService.getTaskSummary(scope, task.id);
+    expect(taskLog).toMatchObject({
+      taskId: task.id,
+      workflowId: 'wf-worklog',
+      traceCoverage: { unsupportedClaim: false },
+      evidence: { files: ['src/api/manager-service.ts'], commands: ['npm test'] },
+    });
+    expect(taskLog?.summaryMarkdown).toContain('Worker trace');
+
+    const workflowLog = managerService.getWorkflowSummary(scope, 'wf-worklog');
+    expect(workflowLog).toMatchObject({
+      workflowId: 'wf-worklog',
+      workerCount: 1,
+      traceCoverage: { unsupportedClaims: 0 },
+    });
+    expect(workflowLog?.summaryMarkdown).toContain(task.id);
+  });
+
+  it('requires confirmation before exceeding workflow delegation budget', async () => {
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a', 'worker-b', 'worker-c'] });
+    const workerA = createBot('worker-a');
+    const workerB = createBot('worker-b');
+    const workerC = createBot('worker-c');
+    const managerService = createService([manager, workerA, workerB, workerC]);
+
+    await managerService.dispatchTask(scope, { workerBotName: 'worker-a', prompt: 'first', workflowId: 'wf-budget' });
+    await managerService.dispatchTask(scope, { workerBotName: 'worker-b', prompt: 'second', workflowId: 'wf-budget' });
+    await expect(managerService.dispatchTask(scope, {
+      workerBotName: 'worker-c',
+      prompt: 'third',
+      workflowId: 'wf-budget',
+    })).rejects.toThrow('Delegation budget exceeded');
+
+    const confirmed = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-c',
+      prompt: 'third confirmed',
+      workflowId: 'wf-budget',
+      metadata: { delegationBudgetConfirmed: true },
+    });
+    expect(confirmed.metadata?.delegationBudget).toMatchObject({
+      workerCount: 3,
+      confirmed: true,
+    });
   });
 
   it('records notification failure without marking manager notified', async () => {
@@ -997,6 +1082,7 @@ describe('ManagerService', () => {
       .toEqual([
         'created',
         'instruction_contract',
+        'delegation_budget',
         'queued',
         'trace_policy',
         'started',
