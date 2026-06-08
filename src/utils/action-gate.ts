@@ -23,6 +23,17 @@ const TRAIN_PATTERNS = [
 
 const PUSH_PATTERNS = [/\bgit\s+push\b/i];
 const DELETE_PATTERNS = [/\brm\s+-[^\n;&|]*r/i, /\bgit\s+clean\s+-/i];
+const SCAN_ALL_PATTERNS = [
+  /^find\s+\./i,
+  /^git\s+grep\b/i,
+  /^ls\s+-[^\n]*R\b/i,
+];
+const DEPLOY_PATTERNS = [
+  /\bkubectl\s+(?:apply|rollout|scale|delete|patch)\b/i,
+  /\bhelm\s+(?:install|upgrade|rollback|uninstall)\b/i,
+  /\b(?:vercel|fly|netlify|wrangler)\s+(?:deploy|--prod)\b/i,
+  /\bserverless\s+deploy\b/i,
+];
 const SHELL_CONTROL_OPERATOR_PATTERN = /[;&|<>`$]/;
 const SAFE_READ_ONLY_COMMAND_PATTERNS = [
   /^(?:pwd|ls|cat|nl|wc)\b/,
@@ -91,7 +102,18 @@ function matchesForbiddenAction(action: string, command: string): boolean {
   if (action === 'train') return TRAIN_PATTERNS.some((pattern) => pattern.test(command));
   if (action === 'push') return PUSH_PATTERNS.some((pattern) => pattern.test(command));
   if (action === 'delete') return DELETE_PATTERNS.some((pattern) => pattern.test(command));
+  if (action === 'scan_all') return matchesRepoWideScan(command);
+  if (action === 'deploy') return DEPLOY_PATTERNS.some((pattern) => pattern.test(command));
   return command.toLowerCase().includes(action.toLowerCase());
+}
+
+function matchesRepoWideScan(command: string): boolean {
+  const trimmed = command.trim();
+  if (SCAN_ALL_PATTERNS.some((pattern) => pattern.test(trimmed))) return true;
+  if (!/^rg\b/i.test(trimmed)) return false;
+  const args = trimmed.split(/\s+/).slice(1);
+  if (args.includes('.')) return true;
+  return args.filter((arg) => !arg.startsWith('-')).length <= 1;
 }
 
 function readCommand(toolInput: unknown): string | undefined {

@@ -53,7 +53,7 @@ interface AgentDetailPanelProps {
 }
 
 export function AgentDetailPanel({ bot, agentKey, activeTab, onTabChange, onOpenChat }: AgentDetailPanelProps) {
-  // Determine if this is a sub-agent
+  // Determine whether the selected row is an internal Agent Team teammate.
   const isSubAgent = agentKey.includes('/');
   const subAgentName = isSubAgent ? agentKey.split('/')[1] : null;
   const subAgent: AgentMetadata | undefined = isSubAgent
@@ -85,7 +85,7 @@ export function AgentDetailPanel({ bot, agentKey, activeTab, onTabChange, onOpen
           </div>
           {isSubAgent && (
             <div className={s.parentLabel}>
-              member of <strong>{bot.name}</strong>
+              teammate inside <strong>{bot.name}</strong>
             </div>
           )}
           {!isSubAgent && (
@@ -200,7 +200,7 @@ export function AgentDetailPanel({ bot, agentKey, activeTab, onTabChange, onOpen
 
             {!isSubAgent && bot.agents && bot.agents.length > 0 && (
               <div className={s.subAgentSection}>
-                <span className={s.infoLabel}>Sub-Agents ({bot.agents.length})</span>
+                <span className={s.infoLabel}>Agent Teammates ({bot.agents.length})</span>
                 <div className={s.subAgentList}>
                   {bot.agents.map((agent) => (
                     <div key={agent.name} className={s.subAgentItem}>

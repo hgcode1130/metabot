@@ -27,6 +27,10 @@ const FORBIDDEN_PATTERNS: Array<{ action: string; pattern: RegExp }> = [
   { action: 'push', pattern: /(?:do not|don't|never|must not|without).{0,40}(?:git push|push)/i },
   { action: 'delete', pattern: /(?:不要|别|禁止|不得|不能|不会).{0,24}(?:删除|rm\s+-|clean)/i },
   { action: 'delete', pattern: /(?:do not|don't|never|must not|without).{0,40}(?:delete|remove|rm\s+-|git clean)/i },
+  { action: 'scan_all', pattern: /(?:只看|只读|仅看|仅检查).{0,80}(?:文件|file|路径|path)/i },
+  { action: 'scan_all', pattern: /(?:only|just).{0,40}(?:inspect|read|check).{0,80}(?:file|path)/i },
+  { action: 'deploy', pattern: /(?:看看|检查|评估).{0,40}(?:能不能|是否|可否).{0,40}(?:部署|上线)/i },
+  { action: 'deploy', pattern: /(?:check|see|evaluate).{0,40}(?:whether|if|can).{0,40}(?:deploy|release)/i },
 ];
 
 export function buildInstructionContract(input: InstructionContractInput): InstructionContract {

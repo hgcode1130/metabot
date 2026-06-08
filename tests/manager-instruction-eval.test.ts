@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildWorkerTaskPrompt } from '../src/api/manager-worker-template.js';
 import { buildTaskWorkLog, buildWorkflowWorkLog } from '../src/api/manager-work-log.js';
-import type { ManagerTask } from '../src/api/manager-store.js';
+import type { ManagerTask, ManagerTaskEvent } from '../src/api/manager-store.js';
 import { resolveDelegationBudget } from '../src/api/manager-delegation-budget.js';
+import { evaluateToolUseActionGate } from '../src/utils/action-gate.js';
+import { buildInstructionContract } from '../src/utils/instruction-contract.js';
 
 function task(partial: Partial<ManagerTask> = {}): ManagerTask {
   return {
@@ -60,6 +62,19 @@ describe('manager instruction-following eval suite', () => {
     expect(prompt).toContain('Forbidden actions: write files');
   });
 
+  it('turns single-file scope into a replayable no-whole-repo-scan contract', () => {
+    const contract = buildInstructionContract({
+      prompt: '只看 src/api/doctor.ts 这个文件，别扫全仓库。',
+    });
+
+    expect(contract.forbiddenActions).toContain('scan_all');
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: contract.forbiddenActions },
+      'Bash',
+      { command: 'rg TODO .' },
+    ).allowed).toBe(false);
+  });
+
   it('makes multi-worker delegation transparent in workflow summaries', () => {
     const first = task({ id: 'mgrtask-a', traceId: 'trace-a', workerBotName: 'worker-code' });
     const second = task({ id: 'mgrtask-b', traceId: 'trace-b', workerBotName: 'worker-review' });
@@ -89,6 +104,30 @@ describe('manager instruction-following eval suite', () => {
     expect(log.verification.performed).toHaveLength(1);
   });
 
+  it('maps final claims to task evidence and timestamps', () => {
+    const events: ManagerTaskEvent[] = [{
+      id: 'event-1',
+      taskId: 'mgrtask-1',
+      type: 'worker_result',
+      payload: { summary: 'done' },
+      createdAt: 42,
+    }];
+    const log = buildTaskWorkLog(task(), events);
+
+    expect(log.traceCoverage.claimTraces.length).toBeGreaterThan(0);
+    expect(log.traceCoverage.claimTraces[0]).toMatchObject({
+      taskId: 'mgrtask-1',
+      traceId: 'trace-1',
+      workerBotName: 'worker-a',
+      supported: true,
+      timestamp: 42,
+      evidence: {
+        files: ['src/api/manager-service.ts'],
+        commands: ['npm test'],
+      },
+    });
+  });
+
   it('requires explicit confirmation before broad workflow delegation', () => {
     const scope = { managerBotName: 'manager', managerChatId: 'chat-a' };
     const existingWorkflowTasks = [task({ id: 'mgrtask-1' }), task({ id: 'mgrtask-2' })];
@@ -100,5 +139,18 @@ describe('manager instruction-following eval suite', () => {
       existingWorkflowTasks,
       metadata: {},
     })).toThrow('Delegation budget exceeded');
+  });
+
+  it('blocks direct deployment commands in read-only review or audit tasks', () => {
+    const contract = buildInstructionContract({ prompt: '看看能不能部署这个服务。' });
+    expect(contract.forbiddenActions).toContain('deploy');
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: contract.forbiddenActions },
+      'Bash',
+      { command: 'kubectl apply -f deploy.yaml' },
+    )).toMatchObject({
+      allowed: false,
+      action: 'deploy',
+    });
   });
 });

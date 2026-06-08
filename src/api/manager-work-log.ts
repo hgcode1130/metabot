@@ -1,4 +1,9 @@
 import type { ManagerTask, ManagerTaskEvent, ManagerTaskStatus } from './manager-store.js';
+import {
+  taskTraceCoverage,
+  workflowTraceCoverage,
+  type ManagerTraceCoverage,
+} from './manager-trace-coverage.js';
 
 export interface ManagerTaskWorkLog {
   taskId: string;
@@ -57,13 +62,6 @@ export interface ManagerVerificationSummary {
   notRun: unknown[];
 }
 
-export interface ManagerTraceCoverage {
-  supportedClaims: number;
-  unsupportedClaims: number;
-  traceCoverageRate: number;
-  unsupportedClaim: boolean;
-}
-
 export interface ManagerEventSummary {
   type: string;
   createdAt: number;
@@ -72,7 +70,15 @@ export interface ManagerEventSummary {
 export function buildTaskWorkLog(task: ManagerTask, events: ManagerTaskEvent[] = []): ManagerTaskWorkLog {
   const result = readRecord(task.metadata?.workerResult);
   const evidence = taskEvidence(result, events);
-  const traceCoverage = taskTraceCoverage(task, result, evidence);
+  const traceCoverage = taskTraceCoverage({
+    taskId: task.id,
+    traceId: task.traceId,
+    workerBotName: task.workerBotName,
+    status: task.status,
+    result,
+    evidence,
+    events,
+  });
   const log = baseTaskWorkLog(task, events, evidence, traceCoverage);
   return { ...log, summaryMarkdown: taskSummaryMarkdown(log) };
 }
@@ -145,34 +151,6 @@ function taskEvidence(result: Record<string, unknown> | undefined, events: Manag
   };
 }
 
-function taskTraceCoverage(
-  task: ManagerTask,
-  result: Record<string, unknown> | undefined,
-  evidence: ManagerEvidence,
-): ManagerTraceCoverage {
-  const needsClaim = task.status === 'completed';
-  const supported = result && hasEvidence(evidence) ? 1 : 0;
-  const unsupported = needsClaim && supported === 0 ? 1 : 0;
-  return {
-    supportedClaims: supported,
-    unsupportedClaims: unsupported,
-    traceCoverageRate: needsClaim ? supported : 1,
-    unsupportedClaim: unsupported > 0,
-  };
-}
-
-function workflowTraceCoverage(logs: ManagerTaskWorkLog[]): ManagerTraceCoverage {
-  const supported = logs.reduce((sum, log) => sum + log.traceCoverage.supportedClaims, 0);
-  const unsupported = logs.reduce((sum, log) => sum + log.traceCoverage.unsupportedClaims, 0);
-  const total = supported + unsupported;
-  return {
-    supportedClaims: supported,
-    unsupportedClaims: unsupported,
-    traceCoverageRate: total === 0 ? 1 : supported / total,
-    unsupportedClaim: unsupported > 0,
-  };
-}
-
 function taskDelegation(task: ManagerTask): Record<string, unknown> {
   return {
     reason: metadataString(task.metadata, 'delegationReason'),
@@ -214,10 +192,6 @@ function workflowSummaryMarkdown(log: ManagerWorkflowWorkLog): string {
     `- Trace coverage：${Math.round(log.traceCoverage.traceCoverageRate * 100)}%`,
     `- Unsupported claims：${log.traceCoverage.unsupportedClaims}`,
   ].join('\n');
-}
-
-function hasEvidence(evidence: ManagerEvidence): boolean {
-  return evidence.files.length + evidence.commands.length + evidence.artifacts.length > 0;
 }
 
 function statusCounts(logs: ManagerTaskWorkLog[]): Record<ManagerTaskStatus, number> {

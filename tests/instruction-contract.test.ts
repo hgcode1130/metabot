@@ -34,6 +34,14 @@ describe('instruction contract', () => {
     expect(contract.sideEffectClass).toBe('localWrite');
   });
 
+  it('extracts scope and deployment boundary actions from the prompt', () => {
+    const contract = buildInstructionContract({
+      prompt: '只看 src/api/doctor.ts 这个文件，顺便看看能不能部署。',
+    });
+
+    expect(contract.forbiddenActions).toEqual(expect.arrayContaining(['scan_all', 'deploy']));
+  });
+
   it('round-trips compact metadata', () => {
     const contract = buildInstructionContract({
       prompt: '完成 P0-P1',

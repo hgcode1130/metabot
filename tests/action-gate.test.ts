@@ -34,6 +34,19 @@ describe('action gate', () => {
     ).allowed).toBe(false);
   });
 
+  it('blocks broad repository scans and direct deploy commands when forbidden', () => {
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: ['scan_all'] },
+      'Bash',
+      { command: 'rg TODO .' },
+    ).allowed).toBe(false);
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: ['deploy'] },
+      'Bash',
+      { command: 'kubectl apply -f deploy.yaml' },
+    ).allowed).toBe(false);
+  });
+
   it('allows read-only Bash inspection commands', () => {
     expect(evaluateToolUseActionGate(
       { forbiddenActions: [], sideEffectClass: 'readOnly' },

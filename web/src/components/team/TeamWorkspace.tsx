@@ -138,11 +138,11 @@ export function TeamWorkspace() {
       <div className={s.statusBar}>
         <div className={s.statusStats}>
           <span className={s.statChip}>
-            <span className={s.statNum}>{summary?.totalBots || 0}</span> Bots
+            <span className={s.statNum}>{summary?.totalBots || 0}</span> Worker Bots
           </span>
           <span className={s.statDivider} />
           <span className={s.statChip}>
-            <span className={s.statNum}>{totalAgents}</span> Sub-agents
+            <span className={s.statNum}>{totalAgents}</span> Agent Teammates
           </span>
           <span className={s.statDivider} />
           {(summary?.busyBots || 0) > 0 && (

@@ -90,8 +90,8 @@ export function TeamTreePanel({ bots, selectedKey, onSelect }: TeamTreePanelProp
     <div className={s.panel}>
       {/* Header */}
       <div className={s.header}>
-        <span className={s.headerLabel}>agents</span>
-        <span className={s.headerCount}>{totalAgents}</span>
+        <span className={s.headerLabel}>Worker Bots</span>
+        <span className={s.headerCount}>{bots.length}</span>
       </div>
 
       {/* Search */}
@@ -99,7 +99,7 @@ export function TeamTreePanel({ bots, selectedKey, onSelect }: TeamTreePanelProp
         <span className={s.searchIcon}><IconSearch /></span>
         <input
           className={s.searchInput}
-          placeholder="Filter agents..."
+          placeholder="Filter workers..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -134,7 +134,7 @@ export function TeamTreePanel({ bots, selectedKey, onSelect }: TeamTreePanelProp
                 <StatusDot status={bot.status} />
               </div>
 
-              {/* Sub-agents */}
+              {/* Agent Teammates */}
               {hasAgents && isExpanded && (
                 <div className={s.subAgents}>
                   {bot.agents!.map((agent: AgentMetadata) => {
@@ -159,13 +159,15 @@ export function TeamTreePanel({ bots, selectedKey, onSelect }: TeamTreePanelProp
         })}
 
         {filteredBots.length === 0 && (
-          <div className={s.emptyTree}>No agents match "{search}"</div>
+          <div className={s.emptyTree}>No workers match "{search}"</div>
         )}
       </div>
 
       {/* Footer */}
       <div className={s.footer}>
-        <span>{totalAgents} agents</span>
+        <span>{bots.length} workers</span>
+        <span className={s.footerDivider} />
+        <span>{Math.max(0, totalAgents - bots.length)} teammates</span>
         <span className={s.footerDivider} />
         <span>${totalCost.toFixed(2)}</span>
       </div>
