@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import type * as http from 'node:http';
 import { jsonResponse, parseJsonBody } from './helpers.js';
 import type { RouteContext } from './types.js';
@@ -245,7 +246,6 @@ export async function handleTaskRoutes(
     const sendCards = body.sendCards as boolean | undefined;
     const label = body.label as string | undefined;
     const timezone = body.timezone as string | undefined;
-    const metadata = readScheduleMetadata(body);
 
     if (!botName || !chatId || !prompt) {
       jsonResponse(res, 400, { error: 'Missing required fields: botName, chatId, prompt' });
@@ -257,6 +257,8 @@ export async function handleTaskRoutes(
       jsonResponse(res, 404, { error: `Bot not found: ${botName}` });
       return true;
     }
+
+    const metadata = readScheduleMetadata(body, { botName, chatId });
 
     if (cronExpr) {
       const recurring = scheduler.scheduleRecurring({
@@ -407,16 +409,26 @@ export async function handleTaskRoutes(
   return false;
 }
 
-function readScheduleMetadata(body: Record<string, unknown>): ScheduleMetadata | undefined {
+function readScheduleMetadata(
+  body: Record<string, unknown>,
+  source: { botName: string; chatId: string },
+): ScheduleMetadata {
   const raw = isObject(body.metadata) ? body.metadata : {};
   const sideEffectClass = readSideEffectClass(raw.sideEffectClass ?? body.sideEffectClass);
   const idempotencyKey = readString(raw.idempotencyKey ?? body.idempotencyKey);
-  const metadata = { ...raw };
-  delete metadata.sideEffectClass;
-  delete metadata.idempotencyKey;
+  const workflowId = readString(raw.workflowId ?? body.workflowId);
+  const traceId = readString(raw.traceId ?? body.traceId) ?? `trace-${crypto.randomUUID()}`;
+  const metadata: ScheduleMetadata = {
+    ...raw,
+    origin: readOrigin(raw.origin ?? body.origin) ?? 'api',
+    createdByBotName: readString(raw.createdByBotName ?? body.createdByBotName) ?? source.botName,
+    createdByChatId: readString(raw.createdByChatId ?? body.createdByChatId) ?? source.chatId,
+    traceId,
+  };
   if (sideEffectClass) metadata.sideEffectClass = sideEffectClass;
   if (idempotencyKey) metadata.idempotencyKey = idempotencyKey;
-  return Object.keys(metadata).length > 0 ? metadata as ScheduleMetadata : undefined;
+  if (workflowId) metadata.workflowId = workflowId;
+  return metadata;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -425,6 +437,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function readSideEffectClass(value: unknown): ScheduleMetadata['sideEffectClass'] | undefined {
   if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  return undefined;
+}
+
+function readOrigin(value: unknown): ScheduleMetadata['origin'] | undefined {
+  if (value === 'api' || value === 'manager-mcp' || value === 'cli') return value;
   return undefined;
 }
 
