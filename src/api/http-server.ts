@@ -34,6 +34,7 @@ import {
   handleSkillHubRoutes,
   handleExecutorRoutes,
   handleManagerRoutes,
+  handleDoctorRoutes,
 } from './routes/index.js';
 import type { RouteContext } from './routes/index.js';
 
@@ -108,6 +109,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     handleSkillHubRoutes,
     handleExecutorRoutes,
     handleManagerRoutes,
+    handleDoctorRoutes,
   ];
 
   const server = http.createServer(async (req, res) => {

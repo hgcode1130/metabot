@@ -200,6 +200,26 @@ export type ManagerReminder =
       idempotencyKey?: string;
     };
 
+export interface ManagerServiceDiagnostics {
+  dbPath: string;
+  managerPolicies: ManagerWorkerPolicyDiagnostic[];
+  recentProblemTasks: ManagerProblemTaskDiagnostic[];
+}
+
+export interface ManagerWorkerPolicyDiagnostic {
+  managerBotName: string;
+  workers: string[];
+  allowAllLocalWorkers: boolean;
+}
+
+export interface ManagerProblemTaskDiagnostic {
+  id: string;
+  status: ManagerTaskStatus;
+  workerBotName: string;
+  updatedAt: number;
+  error?: string;
+}
+
 export interface ManagerServiceOptions extends ManagerStoreOptions {
   store?: ManagerStore;
   retryDelayMs?: (classification: RetryableTaskError, retryNumber: number) => number;
@@ -620,6 +640,21 @@ export class ManagerService {
         .filter((task) => reminderOwnedByScope(task, scope))
         .map(recurringToReminder),
     ];
+  }
+
+  diagnostics(): ManagerServiceDiagnostics {
+    const failed = this.store.listTasks({ status: 'failed', limit: 10 });
+    const cancelled = this.store.listTasks({ status: 'cancelled', limit: 10 });
+    return {
+      dbPath: this.store.diagnostics().dbPath,
+      managerPolicies: this.registry.listRegistered()
+        .filter((bot) => bot.config.manager?.enabled === true)
+        .map(managerPolicyDiagnostic),
+      recentProblemTasks: [...failed, ...cancelled]
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, 10)
+        .map(problemTaskDiagnostic),
+    };
   }
 
   cancelReminder(scope: ManagerScope, reminderId: string): boolean {
@@ -1376,5 +1411,23 @@ function reminderTraceFields(reminder: (ScheduledTask | RecurringTask) & Schedul
     traceId: reminder.traceId ?? reminder.metadata?.traceId,
     sideEffectClass: reminder.sideEffectClass ?? reminder.metadata?.sideEffectClass,
     idempotencyKey: reminder.idempotencyKey ?? reminder.metadata?.idempotencyKey,
+  };
+}
+
+function managerPolicyDiagnostic(bot: RegisteredBot): ManagerWorkerPolicyDiagnostic {
+  return {
+    managerBotName: bot.name,
+    workers: bot.config.manager?.workers ?? [],
+    allowAllLocalWorkers: bot.config.manager?.allowAllLocalWorkers === true,
+  };
+}
+
+function problemTaskDiagnostic(task: ManagerTask): ManagerProblemTaskDiagnostic {
+  return {
+    id: task.id,
+    status: task.status,
+    workerBotName: task.workerBotName,
+    updatedAt: task.updatedAt,
+    error: task.error,
   };
 }

@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Logger } from '../utils/logger.js';
+import { ensurePrivateFileMode } from '../utils/file-permissions.js';
 
 export type ManagerTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -178,18 +179,21 @@ export interface ManagerStoreOptions {
 export class ManagerStore {
   private db: Database.Database;
   private logger: Logger;
+  private dbPath: string;
   private eventPayloadArchiveDir: string;
   private maxInlineEventPayloadBytes: number;
 
   constructor(logger: Logger, options: ManagerStoreOptions = {}) {
     this.logger = logger.child({ module: 'manager-store' });
     const dbPath = options.dbPath ?? defaultDbPath();
+    this.dbPath = dbPath;
     this.eventPayloadArchiveDir = options.eventPayloadArchiveDir
       ?? path.join(path.dirname(dbPath), EVENT_PAYLOAD_ARCHIVE_DIR);
     this.maxInlineEventPayloadBytes = options.maxInlineEventPayloadBytes
       ?? DEFAULT_INLINE_EVENT_PAYLOAD_BYTES;
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
+    ensurePrivateFileMode(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.migrate();
     this.logger.info({ dbPath }, 'Manager database initialized');
@@ -411,6 +415,10 @@ export class ManagerStore {
     this.db.close();
   }
 
+  diagnostics(): { dbPath: string } {
+    return { dbPath: this.dbPath };
+  }
+
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS manager_tasks (
@@ -567,7 +575,8 @@ export class ManagerStore {
     const dir = path.join(this.eventPayloadArchiveDir, safePathPart(event.taskId));
     fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, `${safePathPart(event.id)}.json`);
-    fs.writeFileSync(filePath, serialized, 'utf8');
+    fs.writeFileSync(filePath, serialized, { encoding: 'utf8', mode: 0o600 });
+    ensurePrivateFileMode(filePath);
     return path.relative(this.eventPayloadArchiveDir, filePath);
   }
 

@@ -9,6 +9,7 @@ import * as crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import type { Logger } from '../utils/logger.js';
 import type { TaskErrorCode, TaskErrorKind } from '../utils/retry-policy.js';
+import { ensurePrivateFileMode } from '../utils/file-permissions.js';
 
 export interface ActivityEvent {
   id: string;
@@ -33,13 +34,16 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export class ActivityStore {
   private db: Database.Database;
+  private dbPath: string;
   private buffer: ActivityEvent[] = [];
 
   constructor(private logger: Logger) {
     const dataDir = process.env.SESSION_STORE_DIR || path.join(os.homedir(), '.metabot');
     fs.mkdirSync(dataDir, { recursive: true });
     const dbPath = path.join(dataDir, 'activity.db');
+    this.dbPath = dbPath;
     this.db = new Database(dbPath);
+    ensurePrivateFileMode(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.initSchema();
 
@@ -149,6 +153,10 @@ export class ActivityStore {
 
   close(): void {
     this.db.close();
+  }
+
+  diagnostics(): { dbPath: string } {
+    return { dbPath: this.dbPath };
   }
 
   private mapRow(row: any): ActivityEvent {

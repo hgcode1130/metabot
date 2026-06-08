@@ -268,6 +268,7 @@ cmd_stop()    { pm2 stop metabot; }
 cmd_restart() { pm2 restart metabot; }
 cmd_logs()    { pm2 logs metabot "${@}"; }
 cmd_status()  { pm2 describe metabot; }
+cmd_doctor()  { bash "$METABOT_HOME/scripts/metabot-doctor.sh" "$@"; }
 
 case "${1:-help}" in
   update|up)    cmd_update ;;
@@ -276,6 +277,7 @@ case "${1:-help}" in
   restart|rs)   cmd_restart ;;
   logs|log)     shift; cmd_logs "$@" ;;
   status|st)    cmd_status ;;
+  doctor)       shift; cmd_doctor "$@" ;;
   *)
     echo -e "${BOLD}metabot${NC} - MetaBot management CLI"
     echo ""
@@ -285,5 +287,6 @@ case "${1:-help}" in
     echo "  metabot restart    Restart MetaBot"
     echo "  metabot logs       View live logs (pass -n 100 etc.)"
     echo "  metabot status     Show PM2 process status"
+    echo "  metabot doctor     Check API, manager DB, worker policy, and trace health"
     ;;
 esac
