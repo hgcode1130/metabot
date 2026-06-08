@@ -5,6 +5,8 @@ export function taskDto(task: ManagerTask) {
   return {
     id: task.id,
     traceId: task.traceId,
+    workflowId: metadataString(task.metadata, 'workflowId'),
+    substatus: taskSubstatus(task),
     managerBotName: task.managerBotName,
     managerChatId: task.managerChatId,
     workerBotName: task.workerBotName,
@@ -24,6 +26,7 @@ export function taskDto(task: ManagerTask) {
     maxAttempts: task.maxAttempts,
     nextAttemptAt: task.nextAttemptAt ? new Date(task.nextAttemptAt).toISOString() : undefined,
     lastCheckpointAt: task.lastCheckpointAt ? new Date(task.lastCheckpointAt).toISOString() : undefined,
+    lastCheckpointPreview: metadataString(task.metadata, 'lastCheckpointPreview'),
     lastRetryReason: task.lastRetryReason,
     metadata: task.metadata,
   };
@@ -33,6 +36,10 @@ export function taskSummaryDto(task: ManagerTask) {
   return {
     id: task.id,
     traceId: task.traceId,
+    workflowId: metadataString(task.metadata, 'workflowId'),
+    relatedTaskId: metadataString(task.metadata, 'relatedTaskId'),
+    sideEffectClass: metadataString(task.metadata, 'sideEffectClass'),
+    substatus: taskSubstatus(task),
     managerBotName: task.managerBotName,
     managerChatId: task.managerChatId,
     workerBotName: task.workerBotName,
@@ -46,10 +53,12 @@ export function taskSummaryDto(task: ManagerTask) {
     completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : undefined,
     costUsd: task.costUsd,
     durationMs: task.durationMs,
+    nextAttemptAt: task.nextAttemptAt ? new Date(task.nextAttemptAt).toISOString() : undefined,
     error: task.error ? truncateText(task.error, 300) : undefined,
     attemptCount: task.attemptCount,
     maxAttempts: task.maxAttempts,
     lastCheckpointAt: task.lastCheckpointAt ? new Date(task.lastCheckpointAt).toISOString() : undefined,
+    lastCheckpointPreview: metadataString(task.metadata, 'lastCheckpointPreview'),
     lastRetryReason: task.lastRetryReason ? truncateText(task.lastRetryReason, 200) : undefined,
   };
 }
@@ -66,6 +75,19 @@ export function eventDto(event: ManagerTaskEvent) {
 
 function truncateText(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
+}
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function taskSubstatus(task: ManagerTask): string {
+  if (task.status === 'queued' && task.nextAttemptAt && task.nextAttemptAt > Date.now()) return 'retrying';
+  if (task.status === 'queued' && task.lastRetryReason) return 'retry_queued';
+  if (task.status === 'queued' && task.metadata?.resumeRequestedAt) return 'resuming';
+  if (task.status === 'failed' && task.metadata?.workerResultError) return 'result_invalid';
+  return task.status;
 }
 
 export function detailsDto(details: ManagerTaskDetails) {

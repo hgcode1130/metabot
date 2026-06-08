@@ -11,7 +11,12 @@ const EVENT_FILTERS = [
   { label: 'All', value: '' },
   { label: 'Result', value: 'worker_result' },
   { label: 'Checkpoint', value: 'checkpoint' },
+  { label: 'Update', value: 'worker_update' },
+  { label: 'Failed', value: 'failed' },
+  { label: 'Retry', value: 'retry_scheduled' },
+  { label: 'Cancel', value: 'cancel_failed_to_stop' },
   { label: 'Blocked', value: 'action_gate_blocked' },
+  { label: 'Notify', value: 'manager_notification_failed' },
 ] as const;
 
 type EventFilter = (typeof EVENT_FILTERS)[number]['value'];
@@ -116,6 +121,12 @@ export function ManagerTasksPanel({ bot }: Props) {
     if (selectedTask) void loadEvents(selectedTask, eventFilter);
   }, [eventFilter, loadEvents, selectedTaskId]);
 
+  useEffect(() => {
+    if (!selectedTask || !isActiveTask(selectedTask)) return undefined;
+    const id = setInterval(() => { void loadEvents(selectedTask, eventFilter); }, POLL_MS);
+    return () => clearInterval(id);
+  }, [eventFilter, loadEvents, selectedTask]);
+
   if (!bot.managerEnabled) return null;
 
   return (
@@ -143,7 +154,7 @@ export function ManagerTasksPanel({ bot }: Props) {
               className={`${s.taskCard} ${selectedTask?.id === task.id ? s.taskCardActive : ''}`}
               onClick={() => setSelectedId(task.id)}
             >
-              <span className={`${s.status} ${s[`status-${task.status}`]}`}>{task.status}</span>
+              <span className={`${s.status} ${s[`status-${task.status}`]}`}>{task.substatus || task.status}</span>
               <span className={s.taskTitle}>{task.label || task.prompt}</span>
               <span className={s.taskMeta}>
                 {task.workerBotName} | {shortId(task.id)} | {taskDuration(task)}
@@ -159,6 +170,11 @@ export function ManagerTasksPanel({ bot }: Props) {
             <code>{selectedTask.traceId}</code>
             <span>{selectedTask.attemptCount}/{selectedTask.maxAttempts} attempts</span>
           </div>
+          {selectedTask.workflowId && <div className={s.empty}>Workflow: {selectedTask.workflowId}</div>}
+          {selectedTask.nextAttemptAt && <div className={s.empty}>Next retry: {formatTime(selectedTask.nextAttemptAt)}</div>}
+          {selectedTask.lastCheckpointPreview && (
+            <pre className={s.payload}>{payloadPreview({ preview: selectedTask.lastCheckpointPreview })}</pre>
+          )}
           {selectedTask.error && <div className={s.error}>{selectedTask.error}</div>}
           <div className={s.filters}>
             {EVENT_FILTERS.map((filter) => (
@@ -205,6 +221,10 @@ async function responseError(res: Response): Promise<string> {
 
 function shortId(value: string): string {
   return value.slice(0, 8);
+}
+
+function isActiveTask(task: ManagerTask): boolean {
+  return task.status === 'queued' || task.status === 'running';
 }
 
 function taskDuration(task: ManagerTask): string {

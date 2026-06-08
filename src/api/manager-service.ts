@@ -880,8 +880,12 @@ export class ManagerService {
   }
 
   private appendCheckpoint(taskId: string, payload: ManagerCheckpointPayload): void {
+    const task = this.store.getTask(taskId);
     this.store.appendEvent(taskId, 'checkpoint', payload as unknown as Record<string, unknown>);
-    this.store.updateTask(taskId, { lastCheckpointAt: Date.now() });
+    this.store.updateTask(taskId, {
+      lastCheckpointAt: Date.now(),
+      ...(task ? { metadata: mergeTaskMetadata(task.metadata, { lastCheckpointPreview: checkpointSummary(payload) }) } : {}),
+    });
   }
 
   private isProviderAvailable(botName: string): boolean {

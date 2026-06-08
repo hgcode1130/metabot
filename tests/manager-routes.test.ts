@@ -57,8 +57,17 @@ function service() {
       status: 'running',
       createdAt: 1,
       updatedAt: 2,
+      nextAttemptAt: Date.now() + 60_000,
+      lastRetryReason: 'retry soon',
+      lastCheckpointAt: 2,
       resultText: 'large result',
-      metadata: { hidden: true },
+      metadata: {
+        hidden: true,
+        workflowId: 'wf-recent',
+        relatedTaskId: 'mgrtask-parent',
+        sideEffectClass: 'readOnly',
+        lastCheckpointPreview: 'checkpoint preview',
+      },
     }]),
     getTask: vi.fn(() => ({
       id: 'mgrtask-1',
@@ -214,6 +223,14 @@ describe('manager routes', () => {
     expect(out.statusCode).toBe(200);
     expect(out.body.tasks[0].id).toBe('mgrtask-recent');
     expect(out.body.tasks[0].prompt).toHaveLength(243);
+    expect(out.body.tasks[0]).toMatchObject({
+      workflowId: 'wf-recent',
+      relatedTaskId: 'mgrtask-parent',
+      sideEffectClass: 'readOnly',
+      substatus: 'running',
+      lastCheckpointPreview: 'checkpoint preview',
+    });
+    expect(out.body.tasks[0].nextAttemptAt).toBeTruthy();
     expect(out.body.tasks[0].resultText).toBeUndefined();
     expect(out.body.tasks[0].metadata).toBeUndefined();
     expect(svc.listTasksForManager).toHaveBeenCalledWith('manager', {

@@ -189,6 +189,10 @@ export type ManagerTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 
 export interface ManagerTask {
   id: string;
   traceId: string;
+  workflowId?: string;
+  relatedTaskId?: string;
+  sideEffectClass?: string;
+  substatus?: string;
   managerBotName: string;
   managerChatId: string;
   workerBotName: string;
@@ -202,11 +206,13 @@ export interface ManagerTask {
   completedAt?: string;
   costUsd?: number;
   durationMs?: number;
+  nextAttemptAt?: string;
   resultText?: string;
   error?: string;
   attemptCount: number;
   maxAttempts: number;
   lastCheckpointAt?: string;
+  lastCheckpointPreview?: string;
   lastRetryReason?: string;
   metadata?: Record<string, unknown>;
 }
