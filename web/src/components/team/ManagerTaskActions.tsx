@@ -10,10 +10,12 @@ interface Props {
 }
 
 export function ManagerTaskActions({ task, disabled, onAction }: Props) {
-  if (!canCancelTask(task) && !canResumeTask(task)) return null;
+  const canCancel = task.availableActions?.includes('cancel') ?? canCancelTask(task);
+  const canResume = task.availableActions?.includes('resume') ?? canResumeTask(task);
+  if (!canCancel && !canResume) return null;
   return (
     <div className={s.actions}>
-      {canCancelTask(task) && (
+      {canCancel && (
         <button
           type="button"
           className={s.actionButton}
@@ -25,7 +27,7 @@ export function ManagerTaskActions({ task, disabled, onAction }: Props) {
           <StopIcon />
         </button>
       )}
-      {canResumeTask(task) && (
+      {canResume && (
         <button
           type="button"
           className={s.actionButton}

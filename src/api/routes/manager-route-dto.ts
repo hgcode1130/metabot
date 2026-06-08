@@ -7,6 +7,7 @@ export function taskDto(task: ManagerTask) {
     traceId: task.traceId,
     workflowId: metadataString(task.metadata, 'workflowId'),
     substatus: taskSubstatus(task),
+    availableActions: taskAvailableActions(task),
     managerBotName: task.managerBotName,
     managerChatId: task.managerChatId,
     workerBotName: task.workerBotName,
@@ -40,6 +41,7 @@ export function taskSummaryDto(task: ManagerTask) {
     relatedTaskId: metadataString(task.metadata, 'relatedTaskId'),
     sideEffectClass: metadataString(task.metadata, 'sideEffectClass'),
     substatus: taskSubstatus(task),
+    availableActions: taskAvailableActions(task),
     managerBotName: task.managerBotName,
     managerChatId: task.managerChatId,
     workerBotName: task.workerBotName,
@@ -88,6 +90,12 @@ function taskSubstatus(task: ManagerTask): string {
   if (task.status === 'queued' && task.metadata?.resumeRequestedAt) return 'resuming';
   if (task.status === 'failed' && task.metadata?.workerResultError) return 'result_invalid';
   return task.status;
+}
+
+function taskAvailableActions(task: ManagerTask): Array<'cancel' | 'resume'> {
+  if (task.status === 'queued' || task.status === 'running') return ['cancel'];
+  if (task.status === 'failed') return ['resume'];
+  return [];
 }
 
 export function detailsDto(details: ManagerTaskDetails) {

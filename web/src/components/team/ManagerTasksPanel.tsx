@@ -180,7 +180,7 @@ export function ManagerTasksPanel({ bot }: Props) {
               <span className={`${s.status} ${s[`status-${task.status}`]}`}>{task.substatus || task.status}</span>
               <span className={s.taskTitle}>{task.label || task.prompt}</span>
               <span className={s.taskMeta}>
-                {task.workerBotName} | {shortId(task.id)} | {taskDuration(task)}
+                {task.workerBotName} | {shortId(task.managerChatId)} | {shortId(task.id)} | {taskDuration(task)}
               </span>
             </button>
           ))}

@@ -228,6 +228,7 @@ describe('manager routes', () => {
       relatedTaskId: 'mgrtask-parent',
       sideEffectClass: 'readOnly',
       substatus: 'running',
+      availableActions: ['cancel'],
       lastCheckpointPreview: 'checkpoint preview',
     });
     expect(out.body.tasks[0].nextAttemptAt).toBeTruthy();

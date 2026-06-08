@@ -193,6 +193,7 @@ export interface ManagerTask {
   relatedTaskId?: string;
   sideEffectClass?: string;
   substatus?: string;
+  availableActions?: Array<'cancel' | 'resume'>;
   managerBotName: string;
   managerChatId: string;
   workerBotName: string;
