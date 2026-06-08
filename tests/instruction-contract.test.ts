@@ -25,6 +25,15 @@ describe('instruction contract', () => {
     expect(contract.idempotencyKey).toBe('idem-1');
   });
 
+  it('preserves local write side effect class from metadata', () => {
+    const contract = buildInstructionContract({
+      prompt: 'Implement local file edits only',
+      metadata: { sideEffectClass: 'localWrite' },
+    });
+
+    expect(contract.sideEffectClass).toBe('localWrite');
+  });
+
   it('round-trips compact metadata', () => {
     const contract = buildInstructionContract({
       prompt: '完成 P0-P1',

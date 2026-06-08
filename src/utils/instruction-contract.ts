@@ -101,7 +101,7 @@ function readString(value: unknown): string | undefined {
 }
 
 function readSideEffectClass(value: unknown): SideEffectClass {
-  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  if (value === 'none' || value === 'readOnly' || value === 'localWrite' || value === 'externalWrite') return value;
   return 'unknown';
 }
 

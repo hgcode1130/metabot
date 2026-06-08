@@ -147,7 +147,7 @@ Manager-enabled bots (`config.manager.enabled: true`) receive an in-process `met
 
 **Efficiency:** worker dispatch is asynchronous by default. Tasks for the same synthetic worker session are queued serially; tasks for different workers execute concurrently, enabling parallel literature review, experiments, coding, and analysis.
 
-**Traceability:** every delegated task is persisted and queryable via manager tools or REST (`GET /api/manager/tasks/:id?includeEvents=true`). On process restart, any queued/running task is marked failed with a recovery event instead of remaining as a zombie.
+**Traceability:** every delegated task is persisted and queryable via manager tools or REST (`GET /api/manager/tasks/:id?includeEvents=true`, `GET /api/manager/tasks/:id/summary`, and `GET /api/manager/workflows/:workflowId/summary`). On process restart, interrupted tasks are recovered by side-effect class: `none` and `readOnly` tasks are requeued with resume/checkpoint instructions, while `localWrite`, `externalWrite`, and `unknown` tasks are paused as `needs_resume_review` instead of being rerun automatically.
 
 ## Session Isolation
 
