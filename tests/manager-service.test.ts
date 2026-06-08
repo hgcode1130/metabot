@@ -51,12 +51,26 @@ function createConfig(name: string, manager?: BotConfigBase['manager'], engine?:
   };
 }
 
+function workerResultText(summary: string): string {
+  const result = {
+    summary,
+    actionsTaken: [],
+    commands: [],
+    files: [],
+    artifacts: [],
+    verification: [{ command: 'test mock', status: 'passed', details: 'ok' }],
+    risks: [],
+    nextAction: 'manager review',
+  };
+  return [`${summary}.`, '', '```json METABOT_WORKER_RESULT', JSON.stringify(result, null, 2), '```'].join('\n');
+}
+
 function createBot(
   name: string,
   manager?: BotConfigBase['manager'],
   executeApiTask: any = vi.fn().mockResolvedValue({
     success: true,
-    responseText: `done:${name}`,
+    responseText: workerResultText(`done:${name}`),
     costUsd: 0.01,
     durationMs: 10,
   }),
@@ -309,7 +323,7 @@ describe('ManagerService', () => {
         responseText: 'working',
         toolCalls: [],
       }, 'worker-msg-1', false);
-      return { success: true, responseText: 'worker done', costUsd: 0.5, durationMs: 33 };
+      return { success: true, responseText: workerResultText('worker done'), costUsd: 0.5, durationMs: 33 };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -323,7 +337,7 @@ describe('ManagerService', () => {
     });
 
     expect(task.status).toBe('completed');
-    expect(task.resultText).toBe('worker done');
+    expect(task.resultText).toContain('worker done');
     expect(task.prompt).toBe('Do worker work');
     expect(task.metadata).toMatchObject({
       sessionKey: 'default',
@@ -364,7 +378,7 @@ describe('ManagerService', () => {
     expect(eventTypes).toEqual(expect.arrayContaining([
       'worker_update',
       'trace_policy',
-      'worker_result_invalid',
+      'worker_result',
       'acceptance_report',
       'completed',
       'manager_notified',
@@ -385,10 +399,44 @@ describe('ManagerService', () => {
     );
   });
 
+  it('marks successful worker executions failed when the result contract is invalid', async () => {
+    const executeApiTask = vi.fn(async (): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText: 'worker returned plain text',
+      costUsd: 0.5,
+      durationMs: 33,
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'Do worker work',
+      waitTimeoutSeconds: 1,
+    });
+
+    expect(task.status).toBe('failed');
+    expect(task.error).toContain('Invalid worker result');
+    const details = managerService.getTask(scope, task.id, { includeEvents: true });
+    expect(details?.metadata?.workerResultError).toBe('METABOT_WORKER_RESULT block not found');
+    expect(details?.events?.map((event) => event.type)).toEqual(expect.arrayContaining([
+      'worker_result_invalid',
+      'acceptance_report',
+      'failed',
+    ]));
+    expect(manager.sender.sendTextNotice).toHaveBeenCalledWith(
+      'chat-a',
+      expect.stringContaining('failed'),
+      expect.stringContaining('Invalid worker result'),
+      'red',
+    );
+  });
+
   it('applies review templates and workflow metadata to dispatched worker execution', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
-      responseText: 'review done',
+      responseText: workerResultText('review done'),
     }));
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -424,7 +472,7 @@ describe('ManagerService', () => {
   it('keeps forbidden actions in the instruction contract without installing a hard action gate', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
-      responseText: 'done',
+      responseText: workerResultText('done'),
     }));
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -449,7 +497,7 @@ describe('ManagerService', () => {
   it('records read-only side effect class without installing a hard action gate', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
-      responseText: 'done',
+      responseText: workerResultText('done'),
     }));
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -529,7 +577,7 @@ describe('ManagerService', () => {
   it('records notification failure without marking manager notified', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
-      responseText: 'done',
+      responseText: workerResultText('done'),
     }));
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     (manager.sender.sendTextNotice as any).mockRejectedValue(new Error('Feishu send failed'));
@@ -567,7 +615,7 @@ describe('ManagerService', () => {
         responseText: 'final',
         toolCalls: [],
       }, 'worker-msg-final', true);
-      return { success: true, responseText: 'done' };
+      return { success: true, responseText: workerResultText('done') };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -600,7 +648,7 @@ describe('ManagerService', () => {
           toolCalls: [],
         }, `worker-msg-${index}`, index === 2);
       }
-      return { success: true, responseText: 'done' };
+      return { success: true, responseText: workerResultText('done') };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -621,7 +669,7 @@ describe('ManagerService', () => {
   it('does not let forbidden action words fail manager worker execution', async () => {
     const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
       expect(options.actionGatePolicy).toBeUndefined();
-      return { success: true, responseText: 'done' };
+      return { success: true, responseText: workerResultText('done') };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
@@ -650,14 +698,14 @@ describe('ManagerService', () => {
     expect(task.status).toBe('queued');
     await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
 
-    workerResult.resolve({ success: true, responseText: 'done' });
+    workerResult.resolve({ success: true, responseText: workerResultText('done') });
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
   });
 
   it('retries retryable worker failures and keeps the same task id', async () => {
     const executeApiTask = vi.fn()
       .mockResolvedValueOnce({ success: false, responseText: 'partial', error: 'API Error: 429 rate_limit_error' })
-      .mockResolvedValueOnce({ success: true, responseText: 'done after retry' });
+      .mockResolvedValueOnce({ success: true, responseText: workerResultText('done after retry') });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
     const worker = createBot('worker-a', undefined, executeApiTask);
     const managerService = createService([manager, worker], { retryDelayMs: () => 0 });
@@ -743,7 +791,7 @@ describe('ManagerService', () => {
     expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('prompt_sent');
 
-    workerResult.resolve({ success: true, responseText: 'done' });
+    workerResult.resolve({ success: true, responseText: workerResultText('done') });
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
   });
 
@@ -787,7 +835,7 @@ describe('ManagerService', () => {
       outputContractVersion: expect.any(String),
     });
 
-    workerResult.resolve({ success: true, responseText: 'done' });
+    workerResult.resolve({ success: true, responseText: workerResultText('done') });
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
   });
 
@@ -832,7 +880,7 @@ describe('ManagerService', () => {
       ]));
     expect(worker.bridge.appendPromptToRunningTask).not.toHaveBeenCalled();
 
-    workerResult.resolve({ success: true, responseText: 'done' });
+    workerResult.resolve({ success: true, responseText: workerResultText('done') });
     await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(2));
   });
 
@@ -865,9 +913,9 @@ describe('ManagerService', () => {
     const second = await managerService.dispatchTask(scope, { workerBotName: 'worker-a', prompt: 'second' });
 
     await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
-    firstResult.resolve({ success: true, responseText: 'first done' });
+    firstResult.resolve({ success: true, responseText: workerResultText('first done') });
     await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(2));
-    secondResult.resolve({ success: true, responseText: 'second done' });
+    secondResult.resolve({ success: true, responseText: workerResultText('second done') });
 
     await waitFor(() => expect(managerService.getTask(scope, first.id)?.status).toBe('completed'));
     await waitFor(() => expect(managerService.getTask(scope, second.id)?.status).toBe('completed'));
@@ -888,8 +936,8 @@ describe('ManagerService', () => {
 
     await waitFor(() => expect(executeWorkerA).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(executeWorkerB).toHaveBeenCalledTimes(1));
-    workerAResult.resolve({ success: true, responseText: 'first done' });
-    workerBResult.resolve({ success: true, responseText: 'second done' });
+    workerAResult.resolve({ success: true, responseText: workerResultText('first done') });
+    workerBResult.resolve({ success: true, responseText: workerResultText('second done') });
 
     await waitFor(() => expect(managerService.getTask(scope, first.id)?.status).toBe('completed'));
     await waitFor(() => expect(managerService.getTask(scope, second.id)?.status).toBe('completed'));
@@ -917,9 +965,9 @@ describe('ManagerService', () => {
     await waitFor(() => expect(managerService.getTask(scope, second.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('concurrency_waiting'));
 
-    workerAResult.resolve({ success: true, responseText: 'first done' });
+    workerAResult.resolve({ success: true, responseText: workerResultText('first done') });
     await waitFor(() => expect(executeWorkerB).toHaveBeenCalledTimes(1));
-    workerBResult.resolve({ success: true, responseText: 'second done' });
+    workerBResult.resolve({ success: true, responseText: workerResultText('second done') });
 
     await waitFor(() => expect(managerService.getTask(scope, first.id)?.status).toBe('completed'));
     await waitFor(() => expect(managerService.getTask(scope, second.id)?.status).toBe('completed'));
@@ -950,7 +998,7 @@ describe('ManagerService', () => {
         'cancelled',
       ]);
 
-    workerResult.resolve({ success: true, responseText: 'late success' });
+    workerResult.resolve({ success: true, responseText: workerResultText('late success') });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(managerService.getTask(scope, task.id)?.status).toBe('cancelled');
   });
@@ -975,7 +1023,7 @@ describe('ManagerService', () => {
     ]));
     expect(events.some((event) => event.type === 'cancelled')).toBe(false);
 
-    workerResult.resolve({ success: true, responseText: 'late success' });
+    workerResult.resolve({ success: true, responseText: workerResultText('late success') });
     await waitFor(() => expect(managerService.getTask(scope, task.id)?.status).toBe('completed'));
   });
 
@@ -1002,7 +1050,7 @@ describe('ManagerService', () => {
     expect(recoveredEvents).toContain('process_recovered');
     expect(recoveredEvents).toContain('resume_queued');
     await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
-    workerResult.resolve({ success: true, responseText: 'recovered' });
+    workerResult.resolve({ success: true, responseText: workerResultText('recovered') });
     await waitFor(() => expect(store.getTask(interrupted.id)?.status).toBe('completed'));
   });
 
@@ -1026,7 +1074,7 @@ describe('ManagerService', () => {
     expect(resumed.status).toBe('queued');
     expect(managerService.getTask(scope, failed.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('resume_queued');
-    workerResult.resolve({ success: true, responseText: 'resumed' });
+    workerResult.resolve({ success: true, responseText: workerResultText('resumed') });
     await waitFor(() => expect(managerService.getTask(scope, failed.id)?.status).toBe('completed'));
     expect(() => managerService.resumeTask(scope, failed.id)).toThrow('cannot be resumed');
   });

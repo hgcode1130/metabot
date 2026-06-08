@@ -211,6 +211,12 @@ interface RetrySchedulingInput {
   error: unknown;
 }
 
+interface RecordedWorkerResult {
+  metadata: Record<string, unknown>;
+  valid: boolean;
+  error?: string;
+}
+
 const DEFAULT_SESSION_KEY = 'default';
 const MAX_WAIT_TIMEOUT_SECONDS = 60;
 
@@ -809,7 +815,23 @@ export class ManagerService {
       const durationMs = result.durationMs ?? completedAt - startedAt;
       if (result.success) {
         this.circuitBreaker?.recordSuccess(task.workerBotName);
-        const metadata = this.recordWorkerResult(task, result.responseText);
+        const workerResult = this.recordWorkerResult(task, result.responseText);
+        if (!workerResult.valid) {
+          const error = `Invalid worker result: ${workerResult.error}`;
+          checkpoint.final({ status: 'error', responseText: result.responseText, costUsd: result.costUsd, durationMs }, error);
+          this.store.updateTask(task.id, {
+            status: 'failed',
+            completedAt,
+            costUsd: result.costUsd,
+            durationMs,
+            resultText: result.responseText,
+            error,
+            metadata: workerResult.metadata,
+          });
+          this.store.appendEvent(task.id, 'failed', { durationMs, error, ...taskErrorMetadata(error) });
+          await this.notifyManager(task.id);
+          return;
+        }
         checkpoint.final({ status: 'complete', responseText: result.responseText, costUsd: result.costUsd, durationMs });
         this.store.updateTask(task.id, {
           status: 'completed',
@@ -817,7 +839,7 @@ export class ManagerService {
           costUsd: result.costUsd,
           durationMs,
           resultText: result.responseText,
-          metadata,
+          metadata: workerResult.metadata,
         });
         this.store.appendEvent(task.id, 'completed', { durationMs, costUsd: result.costUsd });
         await this.notifyManager(task.id);
@@ -984,19 +1006,23 @@ export class ManagerService {
     this.store.appendEvent(task.id, 'failed', { error, ...taskErrorMetadata(error) });
   }
 
-  private recordWorkerResult(task: ManagerTask, responseText: string): Record<string, unknown> {
+  private recordWorkerResult(task: ManagerTask, responseText: string): RecordedWorkerResult {
     const contract = instructionContractForTask(task);
     const parsed = parseWorkerResult(responseText);
     const report = buildAcceptanceReport(contract.acceptanceCriteria, parsed);
     if (!parsed.ok) {
       this.store.appendEvent(task.id, 'worker_result_invalid', { error: parsed.error });
       this.store.appendEvent(task.id, 'acceptance_report', report);
-      return mergeTaskMetadata(task.metadata, {
-        workerResultError: parsed.error,
-        acceptanceReport: report,
-      });
+      return {
+        valid: false,
+        error: parsed.error,
+        metadata: mergeTaskMetadata(task.metadata, {
+          workerResultError: parsed.error,
+          acceptanceReport: report,
+        }),
+      };
     }
-    return this.recordStructuredWorkerResult(task, parsed.result, report);
+    return { valid: true, metadata: this.recordStructuredWorkerResult(task, parsed.result, report) };
   }
 
   private recordStructuredWorkerResult(
