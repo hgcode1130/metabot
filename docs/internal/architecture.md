@@ -145,9 +145,13 @@ Manager-enabled bots (`config.manager.enabled: true`) receive an in-process `met
 
 **Correctness:** manager tools are disabled unless configured; worker names must be explicitly allowlisted via `manager.workers` or `manager.allowAllLocalWorkers`; self-delegation is denied. Hidden worker tasks call the existing worker `MessageBridge.executeApiTask()` with `sendCards: false` by default so the user-facing thread stays single-manager.
 
+**Worker permissions:** every delegated task records an instruction contract and a worker permission event. `review`, `audit`, and `readOnly` tasks run with a read-only tool profile (`Read`, `Grep`, `Glob`, `Bash`) plus a Bash action gate that blocks mutating commands. Explicit user boundaries such as "only inspect this file" and "check whether this can deploy" are converted into replayable forbidden actions (`scan_all`, `deploy`) instead of relying only on prompt text.
+
 **Efficiency:** worker dispatch is asynchronous by default. Tasks for the same synthetic worker session are queued serially; tasks for different workers execute concurrently, enabling parallel literature review, experiments, coding, and analysis.
 
 **Traceability:** every delegated task is persisted and queryable via manager tools or REST (`GET /api/manager/tasks/:id?includeEvents=true`, `GET /api/manager/tasks/:id/summary`, and `GET /api/manager/workflows/:workflowId/summary`). On process restart, interrupted tasks are recovered by side-effect class: `none` and `readOnly` tasks are requeued with resume/checkpoint instructions, while `localWrite`, `externalWrite`, and `unknown` tasks are paused as `needs_resume_review` instead of being rerun automatically.
+
+**Work log and health:** Manager Work Log summaries expose worker/task/trace IDs, evidence files, commands, artifacts, verification, risks, actual cost, cancelled workers, and claim-level trace coverage (`claimTraces`). `metabot doctor --json` is backed by `/api/doctor` and checks DB/config permissions, DB writability, manager allowlists, explicit worker budgets, trace summary APIs, worker queue health, reminder queue health, API secret configuration, Feishu `groupNoMention`, and configured external memory/Chroma health status.
 
 ## Session Isolation
 
