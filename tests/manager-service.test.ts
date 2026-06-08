@@ -1054,6 +1054,40 @@ describe('ManagerService', () => {
     await waitFor(() => expect(store.getTask(interrupted.id)?.status).toBe('completed'));
   });
 
+  it('does not run recovered retry tasks before nextAttemptAt', async () => {
+    const temp = createTempDbPath();
+    tmpDir = temp.dir;
+    store = new ManagerStore(createLogger(), { dbPath: temp.dbPath });
+    const nextAttemptAt = Date.now() + 150;
+    const retry = store.createTask({
+      managerBotName: 'manager',
+      managerChatId: 'chat-a',
+      workerBotName: 'worker-a',
+      workerChatId: 'worker-chat',
+      prompt: 'retry later',
+      metadata: { sendCards: false },
+    });
+    store.updateTask(retry.id, {
+      status: 'queued',
+      attemptCount: 1,
+      nextAttemptAt,
+      lastRetryReason: 'Retry later',
+    });
+    const executeApiTask = vi.fn(async (): Promise<ApiTaskResult> => ({
+      success: true,
+      responseText: workerResultText('recovered retry'),
+    }));
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    service = new ManagerService(createRegistry([manager, worker]), createScheduler().scheduler, createLogger(), { store });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(executeApiTask).not.toHaveBeenCalled();
+    expect(store.getTask(retry.id)?.nextAttemptAt).toBe(nextAttemptAt);
+    await waitFor(() => expect(executeApiTask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(store.getTask(retry.id)?.status).toBe('completed'));
+  });
+
   it('resumes failed or queued tasks and rejects completed tasks', async () => {
     const workerResult = deferred<ApiTaskResult>();
     const executeApiTask = vi.fn((_options: ApiTaskOptions) => workerResult.promise);

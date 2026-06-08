@@ -605,7 +605,7 @@ export class ManagerService {
     const reason = 'Process recovered before manager task completed';
     const recovered = this.store.recoverInterruptedTasks(reason);
     for (const task of recovered.requeued) {
-      this.enqueueWorkerTask(task.id, task.workerChatId, sendCardsForTask(task));
+      this.enqueueRecoveredTask(task);
     }
     if (recovered.requeued.length > 0 || recovered.exhausted.length > 0) {
       this.logger.warn(
@@ -613,6 +613,15 @@ export class ManagerService {
         'Recovered interrupted manager tasks',
       );
     }
+  }
+
+  private enqueueRecoveredTask(task: ManagerTask): void {
+    const delayMs = (task.nextAttemptAt ?? 0) - Date.now();
+    if (delayMs > 0) {
+      this.scheduleRetryTimer(task.id, task.workerChatId, sendCardsForTask(task), delayMs);
+      return;
+    }
+    this.enqueueWorkerTask(task.id, task.workerChatId, sendCardsForTask(task));
   }
 
   private requireManager(scope: ManagerScope): RegisteredBot {

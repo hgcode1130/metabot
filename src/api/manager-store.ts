@@ -487,11 +487,12 @@ export class ManagerStore {
 
   private requeueRecoveredTask(task: ManagerTask, reason: string): void {
     const now = Date.now();
+    const nextAttemptAt = task.nextAttemptAt && task.nextAttemptAt > now ? task.nextAttemptAt : now;
     this.db.prepare(`
       UPDATE manager_tasks
       SET status = 'queued', updated_at = ?, next_attempt_at = ?, last_retry_reason = ?
       WHERE id = ? AND status IN ('queued', 'running')
-    `).run(now, now, reason, task.id);
+    `).run(now, nextAttemptAt, reason, task.id);
     this.insertEvent(task.id, 'process_recovered', { reason });
     this.insertEvent(task.id, 'resume_queued', { reason });
   }
