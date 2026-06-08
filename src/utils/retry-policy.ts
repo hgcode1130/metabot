@@ -58,7 +58,7 @@ export interface TaskErrorMetadata {
   errorReason?: string;
 }
 
-export type SideEffectClass = 'none' | 'readOnly' | 'externalWrite' | 'unknown';
+export type SideEffectClass = 'none' | 'readOnly' | 'localWrite' | 'externalWrite' | 'unknown';
 
 export interface RetrySafetyDecision {
   allowed: boolean;
@@ -204,7 +204,7 @@ function requiresExplicitRetrySafety(classification: RetryableTaskError): boolea
 }
 
 function readSideEffectClass(value: unknown): SideEffectClass {
-  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  if (value === 'none' || value === 'readOnly' || value === 'localWrite' || value === 'externalWrite') return value;
   return 'unknown';
 }
 

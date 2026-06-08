@@ -436,7 +436,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function readSideEffectClass(value: unknown): ScheduleMetadata['sideEffectClass'] | undefined {
-  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  if (value === 'none' || value === 'readOnly' || value === 'localWrite' || value === 'externalWrite') return value;
   return undefined;
 }
 

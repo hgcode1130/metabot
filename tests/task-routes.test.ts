@@ -58,7 +58,7 @@ describe('task routes', () => {
         prompt: 'remember',
         delaySeconds: DELAY_SECONDS,
         workflowId: 'wf-api',
-        sideEffectClass: 'readOnly',
+        sideEffectClass: 'localWrite',
         idempotencyKey: 'idem-api',
       }),
       out,
@@ -75,7 +75,7 @@ describe('task routes', () => {
         createdByChatId: 'chat-a',
         workflowId: 'wf-api',
         traceId: expect.stringMatching(/^trace-/),
-        sideEffectClass: 'readOnly',
+        sideEffectClass: 'localWrite',
         idempotencyKey: 'idem-api',
       }),
     }));
@@ -84,7 +84,7 @@ describe('task routes', () => {
       createdByBotName: 'bot-a',
       createdByChatId: 'chat-a',
       workflowId: 'wf-api',
-      sideEffectClass: 'readOnly',
+      sideEffectClass: 'localWrite',
       idempotencyKey: 'idem-api',
     });
   });

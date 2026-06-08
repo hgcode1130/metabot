@@ -698,7 +698,7 @@ function recoveryMetadata(
 
 function readSideEffectClass(metadata: Record<string, unknown> | undefined): string {
   const value = metadata?.sideEffectClass;
-  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+  if (value === 'none' || value === 'readOnly' || value === 'localWrite' || value === 'externalWrite') return value;
   return 'unknown';
 }
 

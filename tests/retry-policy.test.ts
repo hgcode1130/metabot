@@ -51,6 +51,10 @@ describe('retry policy', () => {
       sideEffectClass: 'unknown',
     });
     expect(retrySafetyDecision(classification, { sideEffectClass: 'readOnly' })).toMatchObject({ allowed: true });
+    expect(retrySafetyDecision(classification, { sideEffectClass: 'localWrite' })).toMatchObject({
+      allowed: false,
+      sideEffectClass: 'localWrite',
+    });
     expect(retrySafetyDecision(classification, { sideEffectClass: 'externalWrite', idempotencyKey: 'task-1' }))
       .toMatchObject({ allowed: true, idempotencyKey: 'task-1' });
   });

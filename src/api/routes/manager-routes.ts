@@ -348,7 +348,7 @@ function optionalEventPayload(value: string | null): ManagerTaskEventPayloadMode
   throw Object.assign(new Error(`Invalid event payload mode: ${value}`), { statusCode: 400 });
 }
 
-function optionalSideEffectClass(value: unknown): 'none' | 'readOnly' | 'externalWrite' | undefined {
-  if (value === 'none' || value === 'readOnly' || value === 'externalWrite') return value;
+function optionalSideEffectClass(value: unknown): 'none' | 'readOnly' | 'localWrite' | 'externalWrite' | undefined {
+  if (value === 'none' || value === 'readOnly' || value === 'localWrite' || value === 'externalWrite') return value;
   return undefined;
 }

@@ -311,8 +311,8 @@ describe('ManagerStore', () => {
       managerChatId: 'chat-a',
       workerBotName: 'worker',
       workerChatId: 'chat-worker',
-      prompt: 'external write',
-      metadata: { sideEffectClass: 'externalWrite' },
+      prompt: 'local write',
+      metadata: { sideEffectClass: 'localWrite' },
     });
     managerStore.updateTask(task.id, { status: 'running', startedAt: Date.now() });
 
@@ -324,7 +324,7 @@ describe('ManagerStore', () => {
       status: 'failed',
       lastRetryReason: 'restart',
       metadata: {
-        sideEffectClass: 'externalWrite',
+        sideEffectClass: 'localWrite',
         recoveryStatus: 'needs_resume_review',
       },
     });

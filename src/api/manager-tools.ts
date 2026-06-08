@@ -53,7 +53,7 @@ export interface ManagerToolResult {
 }
 
 const taskTemplate = z.enum(WORKER_TASK_TEMPLATES);
-const sideEffectClass = z.enum(['none', 'readOnly', 'externalWrite']);
+const sideEffectClass = z.enum(['none', 'readOnly', 'localWrite', 'externalWrite']);
 const metadata = z.record(z.string(), z.unknown());
 const managerEventType = z.enum(MANAGER_TASK_EVENT_TYPES);
 const eventPayloadMode = z.enum(['preview', 'full']);
