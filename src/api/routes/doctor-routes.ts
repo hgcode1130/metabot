@@ -17,6 +17,7 @@ export async function handleDoctorRoutes(
       botsConfigPath: ctx.botsConfigPath,
       activityStore: ctx.activityStore,
       managerService: ctx.managerService,
+      memoryServerUrl: ctx.memoryServerUrl,
     }),
   });
   return true;

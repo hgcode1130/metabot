@@ -204,7 +204,11 @@ export type ManagerReminder =
 export interface ManagerServiceDiagnostics {
   dbPath: string;
   managerPolicies: ManagerWorkerPolicyDiagnostic[];
+  managerBudgets: ManagerWorkerBudgetDiagnostic[];
   recentProblemTasks: ManagerProblemTaskDiagnostic[];
+  workerQueue: ManagerWorkerQueueDiagnostic;
+  reminderQueue: ManagerReminderQueueDiagnostic;
+  traceSummaryApi: ManagerTraceSummaryApiDiagnostic;
 }
 
 export interface ManagerWorkerPolicyDiagnostic {
@@ -219,6 +223,31 @@ export interface ManagerProblemTaskDiagnostic {
   workerBotName: string;
   updatedAt: number;
   error?: string;
+}
+
+export interface ManagerWorkerBudgetDiagnostic {
+  managerBotName: string;
+  maxConcurrentWorkerTasks?: number;
+  processMaxBackgroundWorkerTasks: number;
+  configured: boolean;
+}
+
+export interface ManagerWorkerQueueDiagnostic {
+  runningTasks: number;
+  queuedTasks: number;
+  workerSessionQueues: number;
+  retryTimers: number;
+  managerScopes: number;
+}
+
+export interface ManagerReminderQueueDiagnostic {
+  pendingOneTime: number;
+  activeRecurring: number;
+}
+
+export interface ManagerTraceSummaryApiDiagnostic {
+  taskSummary: boolean;
+  workflowSummary: boolean;
 }
 
 export interface ManagerServiceOptions extends ManagerStoreOptions {
@@ -646,15 +675,22 @@ export class ManagerService {
   diagnostics(): ManagerServiceDiagnostics {
     const failed = this.store.listTasks({ status: 'failed', limit: 10 });
     const cancelled = this.store.listTasks({ status: 'cancelled', limit: 10 });
+    const managers = this.registry.listRegistered()
+      .filter((bot) => bot.config.manager?.enabled === true);
     return {
       dbPath: this.store.diagnostics().dbPath,
-      managerPolicies: this.registry.listRegistered()
-        .filter((bot) => bot.config.manager?.enabled === true)
-        .map(managerPolicyDiagnostic),
+      managerPolicies: managers.map(managerPolicyDiagnostic),
+      managerBudgets: managers.map(managerBudgetDiagnostic),
       recentProblemTasks: [...failed, ...cancelled]
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 10)
         .map(problemTaskDiagnostic),
+      workerQueue: this.workerQueueDiagnostic(),
+      reminderQueue: {
+        pendingOneTime: this.scheduler.listTasks().length,
+        activeRecurring: this.scheduler.listRecurringTasks().length,
+      },
+      traceSummaryApi: { taskSummary: true, workflowSummary: true },
     };
   }
 
@@ -1194,6 +1230,16 @@ export class ManagerService {
     if (!task) throw new Error(`Manager task not found: ${taskId}`);
     return task;
   }
+
+  private workerQueueDiagnostic(): ManagerWorkerQueueDiagnostic {
+    return {
+      runningTasks: this.store.listTasks({ status: 'running', limit: 500 }).length,
+      queuedTasks: this.store.listTasks({ status: 'queued', limit: 500 }).length,
+      workerSessionQueues: this.workerQueues.size,
+      retryTimers: this.retryTimers.size,
+      managerScopes: this.managerConcurrency.size,
+    };
+  }
 }
 
 export function buildWorkerChatId(scope: ManagerScope, workerBotName: string, sessionKey = DEFAULT_SESSION_KEY): string {
@@ -1442,6 +1488,15 @@ function managerPolicyDiagnostic(bot: RegisteredBot): ManagerWorkerPolicyDiagnos
     managerBotName: bot.name,
     workers: bot.config.manager?.workers ?? [],
     allowAllLocalWorkers: bot.config.manager?.allowAllLocalWorkers === true,
+  };
+}
+
+function managerBudgetDiagnostic(bot: RegisteredBot): ManagerWorkerBudgetDiagnostic {
+  return {
+    managerBotName: bot.name,
+    maxConcurrentWorkerTasks: bot.config.manager?.maxConcurrentWorkerTasks,
+    processMaxBackgroundWorkerTasks: getDefaultTaskExecutionQueue().snapshot().limits.maxBackgroundWorkerTasks,
+    configured: Number.isInteger(bot.config.manager?.maxConcurrentWorkerTasks),
   };
 }
 

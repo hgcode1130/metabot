@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as fs from 'node:fs';
 import type { BotRegistry } from './bot-registry.js';
 import type { ActivityStore } from './activity-store.js';
 import type { ManagerService } from './manager-service.js';
@@ -26,7 +27,16 @@ export interface DoctorInput {
   botsConfigPath?: string;
   activityStore?: ActivityStore;
   managerService?: ManagerService;
+  memoryServerUrl?: string;
+  memoryHealth?: DoctorExternalHealth;
+  chromaHealth?: DoctorExternalHealth;
   env?: NodeJS.ProcessEnv;
+}
+
+export interface DoctorExternalHealth {
+  status: DoctorCheckStatus;
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 export function buildDoctorReport(input: DoctorInput): DoctorReport {
@@ -35,6 +45,8 @@ export function buildDoctorReport(input: DoctorInput): DoctorReport {
     ...permissionChecks(input, env),
     apiSecretCheck(env),
     ...managerWorkerChecks(input.managerService),
+    memoryHealthCheck(input, env),
+    chromaHealthCheck(input, env),
     ...feishuChecks(input.registry),
   ];
   return finalizeReport(checks);
@@ -45,7 +57,9 @@ function permissionChecks(input: DoctorInput, env: NodeJS.ProcessEnv): DoctorChe
   const activity = input.activityStore?.diagnostics();
   return [
     permissionCheck('manager_db_permissions', filePermissionStatus(manager?.dbPath), 'Manager DB'),
+    writableFileCheck('manager_db_writable', manager?.dbPath, 'Manager DB'),
     permissionCheck('activity_db_permissions', filePermissionStatus(activity?.dbPath), 'Activity DB'),
+    writableFileCheck('activity_db_writable', activity?.dbPath, 'Activity DB'),
     permissionCheck('env_file_permissions', filePermissionStatus(resolveEnvPath(env)), '.env'),
     permissionCheck('bots_config_permissions', filePermissionStatus(input.botsConfigPath), 'bots.json'),
   ].filter((check): check is DoctorCheck => !!check);
@@ -63,6 +77,22 @@ function permissionCheck(
   return { id, status: 'warning', message: `${label} permissions should be 0600`, details };
 }
 
+function writableFileCheck(id: string, filePath: string | undefined, label: string): DoctorCheck | undefined {
+  if (!filePath) return undefined;
+  if (!fs.existsSync(filePath)) return { id, status: 'warning', message: `${label} not found`, details: { path: filePath } };
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK | fs.constants.W_OK);
+    return { id, status: 'ok', message: `${label} is readable and writable`, details: { path: filePath } };
+  } catch (err: any) {
+    return {
+      id,
+      status: 'error',
+      message: `${label} is not readable/writable`,
+      details: { path: filePath, error: err?.message ?? String(err) },
+    };
+  }
+}
+
 function apiSecretCheck(env: NodeJS.ProcessEnv): DoctorCheck {
   const value = env.API_SECRET || env.METABOT_API_SECRET;
   if (value && value !== 'changeme') {
@@ -76,6 +106,10 @@ function managerWorkerChecks(service: ManagerService | undefined): DoctorCheck[]
   const diagnostics = service.diagnostics();
   return [
     ...diagnostics.managerPolicies.map(managerPolicyCheck),
+    ...managerBudgetChecks(diagnostics.managerBudgets ?? []),
+    traceSummaryApiCheck(diagnostics.traceSummaryApi),
+    workerQueueHealthCheck(diagnostics.workerQueue),
+    reminderQueueHealthCheck(diagnostics.reminderQueue),
     recentProblemTaskCheck(diagnostics.recentProblemTasks),
   ];
 }
@@ -100,6 +134,54 @@ function managerPolicyCheck(policy: ReturnType<ManagerService['diagnostics']>['m
   return { id: `manager_allowlist_${policy.managerBotName}`, status: 'ok', message: 'Manager worker allowlist is explicit', details: { ...policy } };
 }
 
+function managerBudgetChecks(
+  budgets: ReturnType<ManagerService['diagnostics']>['managerBudgets'],
+): DoctorCheck[] {
+  if (!budgets || budgets.length === 0) {
+    return [{ id: 'manager_worker_budget', status: 'warning', message: 'No manager worker budget diagnostics available' }];
+  }
+  return budgets.map((budget) => {
+    const details = { ...budget };
+    if (budget.configured) {
+      return {
+        id: `manager_worker_budget_${budget.managerBotName}`,
+        status: 'ok' as const,
+        message: 'Manager worker concurrency budget is explicit',
+        details,
+      };
+    }
+    return {
+      id: `manager_worker_budget_${budget.managerBotName}`,
+      status: 'warning' as const,
+      message: 'Manager worker concurrency budget uses process default',
+      details,
+    };
+  });
+}
+
+function traceSummaryApiCheck(
+  api: ReturnType<ManagerService['diagnostics']>['traceSummaryApi'] | undefined,
+): DoctorCheck {
+  if (api?.taskSummary === true && api.workflowSummary === true) {
+    return { id: 'manager_trace_summary_api', status: 'ok', message: 'Manager trace summary APIs are queryable', details: { ...api } };
+  }
+  return { id: 'manager_trace_summary_api', status: 'error', message: 'Manager trace summary APIs are not fully available', details: { ...api } };
+}
+
+function workerQueueHealthCheck(
+  queue: ReturnType<ManagerService['diagnostics']>['workerQueue'] | undefined,
+): DoctorCheck {
+  if (!queue) return { id: 'manager_worker_queue_health', status: 'warning', message: 'Worker queue diagnostics unavailable' };
+  return { id: 'manager_worker_queue_health', status: 'ok', message: 'Worker queue diagnostics are queryable', details: { ...queue } };
+}
+
+function reminderQueueHealthCheck(
+  queue: ReturnType<ManagerService['diagnostics']>['reminderQueue'] | undefined,
+): DoctorCheck {
+  if (!queue) return { id: 'manager_reminder_queue_health', status: 'warning', message: 'Reminder queue diagnostics unavailable' };
+  return { id: 'manager_reminder_queue_health', status: 'ok', message: 'Reminder queue diagnostics are queryable', details: { ...queue } };
+}
+
 function recentProblemTaskCheck(tasks: ReturnType<ManagerService['diagnostics']>['recentProblemTasks']): DoctorCheck {
   if (tasks.length === 0) return { id: 'recent_manager_problem_tasks', status: 'ok', message: 'No recent failed or cancelled manager tasks' };
   return {
@@ -108,6 +190,37 @@ function recentProblemTaskCheck(tasks: ReturnType<ManagerService['diagnostics']>
     message: `${tasks.length} recent failed or cancelled manager task(s)`,
     details: { tasks },
   };
+}
+
+function memoryHealthCheck(input: DoctorInput, env: NodeJS.ProcessEnv): DoctorCheck {
+  if (input.memoryHealth) return externalHealthCheck('memory_health', input.memoryHealth);
+  if (env.MEMORY_ENABLED === 'false') {
+    return { id: 'memory_health', status: 'ok', message: 'MetaMemory is disabled by configuration' };
+  }
+  const url = input.memoryServerUrl || env.META_MEMORY_URL || env.MEMORY_SERVER_URL;
+  if (!url) return { id: 'memory_health', status: 'warning', message: 'MetaMemory URL is not configured' };
+  return {
+    id: 'memory_health',
+    status: 'warning',
+    message: 'MetaMemory URL is configured but runtime health was not sampled by this doctor report',
+    details: { url },
+  };
+}
+
+function chromaHealthCheck(input: DoctorInput, env: NodeJS.ProcessEnv): DoctorCheck {
+  if (input.chromaHealth) return externalHealthCheck('chroma_health', input.chromaHealth);
+  const url = env.CHROMA_URL || env.CHROMA_HOST;
+  if (!url) return { id: 'chroma_health', status: 'ok', message: 'Chroma is not configured for this deployment' };
+  return {
+    id: 'chroma_health',
+    status: 'warning',
+    message: 'Chroma is configured but runtime health was not sampled by this doctor report',
+    details: { url },
+  };
+}
+
+function externalHealthCheck(id: string, health: DoctorExternalHealth): DoctorCheck {
+  return { id, status: health.status, message: health.message, details: health.details };
 }
 
 function feishuChecks(registry: BotRegistry): DoctorCheck[] {

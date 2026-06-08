@@ -28,7 +28,28 @@ function managerService(dbPath: string, overrides: Partial<ReturnType<ManagerSer
     diagnostics: () => ({
       dbPath,
       managerPolicies: [{ managerBotName: 'manager', workers: ['worker-a'], allowAllLocalWorkers: false }],
+      managerBudgets: [{
+        managerBotName: 'manager',
+        maxConcurrentWorkerTasks: 2,
+        processMaxBackgroundWorkerTasks: 4,
+        configured: true,
+      }],
       recentProblemTasks: [],
+      workerQueue: {
+        runningTasks: 0,
+        queuedTasks: 0,
+        workerSessionQueues: 0,
+        retryTimers: 0,
+        managerScopes: 0,
+      },
+      reminderQueue: {
+        pendingOneTime: 0,
+        activeRecurring: 0,
+      },
+      traceSummaryApi: {
+        taskSummary: true,
+        workflowSummary: true,
+      },
       ...overrides,
     }),
   } as unknown as ManagerService;
@@ -55,6 +76,8 @@ describe('doctor report', () => {
       botsConfigPath: botsPath,
       activityStore: activityStore(activityDb),
       managerService: managerService(managerDb),
+      memoryHealth: { status: 'ok', message: 'MetaMemory health is ok' },
+      chromaHealth: { status: 'ok', message: 'Chroma health is ok' },
       env: { API_SECRET: 'secret', METABOT_ENV: envPath },
     });
 
@@ -77,8 +100,14 @@ describe('doctor report', () => {
       activityStore: activityStore(activityDb),
       managerService: managerService(managerDb, {
         managerPolicies: [{ managerBotName: 'manager', workers: [], allowAllLocalWorkers: true }],
+        managerBudgets: [{
+          managerBotName: 'manager',
+          processMaxBackgroundWorkerTasks: 4,
+          configured: false,
+        }],
         recentProblemTasks: [{ id: 'mgrtask-failed', status: 'failed', workerBotName: 'worker-a', updatedAt: 1 }],
       }),
+      memoryServerUrl: 'http://localhost:8100',
       env: { API_SECRET: 'secret', METABOT_ENV: envPath },
     });
 
@@ -86,6 +115,12 @@ describe('doctor report', () => {
     expect(report.checks.map((check) => check.id)).toEqual(expect.arrayContaining([
       'manager_db_permissions',
       'manager_allowlist_manager',
+      'manager_worker_budget_manager',
+      'manager_trace_summary_api',
+      'manager_worker_queue_health',
+      'manager_reminder_queue_health',
+      'memory_health',
+      'chroma_health',
       'recent_manager_problem_tasks',
       'feishu_group_no_mention_manager',
     ]));
