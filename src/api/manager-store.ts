@@ -13,6 +13,7 @@ export const MANAGER_TASK_EVENT_TYPES = [
   'instruction_contract',
   'delegation_budget',
   'trace_policy',
+  'worker_permissions',
   'queued',
   'started',
   'worker_message',

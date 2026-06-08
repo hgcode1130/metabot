@@ -61,6 +61,7 @@ import {
   type ManagerWorkflowWorkLog,
 } from './manager-work-log.js';
 import { resolveEngineName } from '../engines/index.js';
+import { resolveManagerWorkerPermissions } from './manager-worker-permissions.js';
 
 export interface ManagerScope {
   managerBotName: string;
@@ -878,6 +879,19 @@ export class ManagerService {
       { attempt, workerChatId: task.workerChatId },
     );
     const traceRecorder = new ManagerTraceRecorder(tracePolicyForTask(task, this.tracePolicy));
+    const instructionContract = instructionContractForTask(task);
+    const permissions = resolveManagerWorkerPermissions({
+      taskTemplate: task.metadata?.taskTemplate,
+      sideEffectClass: instructionContract.sideEffectClass,
+      forbiddenActions: instructionContract.forbiddenActions,
+      taskId: task.id,
+      traceId: task.traceId,
+    });
+    this.store.appendEvent(task.id, 'worker_permissions', {
+      mode: permissions.mode,
+      allowedTools: permissions.allowedTools,
+      reason: permissions.reason,
+    });
 
     try {
       const result = await worker.bridge.executeApiTask({
@@ -887,6 +901,15 @@ export class ManagerService {
         sendCards,
         executionSource: 'manager-worker',
         backgroundWorker: true,
+        allowedTools: permissions.allowedTools,
+        actionGatePolicy: permissions.actionGatePolicy,
+        onActionGateBlocked: (decision) => {
+          this.store.appendEvent(task.id, 'action_gate_blocked', {
+            ...decision,
+            mode: permissions.mode,
+            reason: decision.reason,
+          });
+        },
         onRawMessage: (message) => {
           if (traceRecorder.shouldRecordWorkerMessage()) {
             this.store.appendEvent(task.id, 'worker_message', { message });

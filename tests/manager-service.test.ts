@@ -366,18 +366,20 @@ describe('ManagerService', () => {
     expect(callOptions.prompt).toContain('Do worker work');
     expect(callOptions.chatId).toMatch(/^manager-worker-[a-f0-9]{32}$/);
     expect(callOptions.actionGatePolicy).toBeUndefined();
+    expect(callOptions.allowedTools).toBeUndefined();
 
     await waitFor(() => expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events?.map((event) => event.type))
       .toContain('manager_notified'));
     const details = managerService.getTask(scope, task.id, { includeEvents: true });
     const eventTypes = details?.events?.map((event) => event.type) ?? [];
-    expect(eventTypes.slice(0, 8)).toEqual([
+    expect(eventTypes.slice(0, 9)).toEqual([
       'created',
       'instruction_contract',
       'delegation_budget',
       'queued',
       'trace_policy',
       'started',
+      'worker_permissions',
       'worker_message',
       'checkpoint',
     ]);
@@ -469,6 +471,8 @@ describe('ManagerService', () => {
       outputContractVersion: expect.any(String),
     });
     const callOptions = executeApiTask.mock.calls[0][0];
+    expect(callOptions.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    expect(callOptions.actionGatePolicy).toMatchObject({ sideEffectClass: 'readOnly' });
     expect(callOptions.prompt).toContain('Template: review');
     expect(callOptions.prompt).toContain('Related task ID: mgrtask-related');
     expect(callOptions.prompt).toContain('Workflow ID: workflow-1');
@@ -476,7 +480,7 @@ describe('ManagerService', () => {
     expect(callOptions.prompt).toContain('Review the implementation diff');
   });
 
-  it('keeps forbidden actions in the instruction contract without installing a hard action gate', async () => {
+  it('keeps forbidden actions in the instruction contract and installs a hard action gate', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
       responseText: workerResultText('done'),
@@ -492,7 +496,12 @@ describe('ManagerService', () => {
     });
 
     const callOptions = executeApiTask.mock.calls[0][0];
-    expect(callOptions.actionGatePolicy).toBeUndefined();
+    expect(callOptions.actionGatePolicy).toMatchObject({
+      forbiddenActions: ['train', 'push'],
+      taskId: task.id,
+      traceId: task.traceId,
+    });
+    expect(callOptions.allowedTools).toBeUndefined();
     expect(callOptions.prompt).toContain('Forbidden actions: train, push');
     const contractEvent = managerService.getTask(scope, task.id, { includeEvents: true })?.events
       ?.find((event) => event.type === 'instruction_contract');
@@ -501,7 +510,7 @@ describe('ManagerService', () => {
     });
   });
 
-  it('records read-only side effect class without installing a hard action gate', async () => {
+  it('records read-only side effect class and applies read-only worker permissions', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
       responseText: workerResultText('done'),
@@ -517,7 +526,12 @@ describe('ManagerService', () => {
       waitTimeoutSeconds: 1,
     });
 
-    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toBeUndefined();
+    expect(executeApiTask.mock.calls[0][0].allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toMatchObject({
+      sideEffectClass: 'readOnly',
+      taskId: task.id,
+      traceId: task.traceId,
+    });
     expect(task.metadata?.sideEffectClass).toBe('readOnly');
     expect(task.metadata?.instructionContract).toMatchObject({
       sideEffectClass: 'readOnly',
@@ -637,6 +651,45 @@ describe('ManagerService', () => {
       traceCoverage: { unsupportedClaims: 0 },
     });
     expect(workflowLog?.summaryMarkdown).toContain(task.id);
+  });
+
+  it('records read-only action gate blocks in the worker trace', async () => {
+    const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
+      options.onActionGateBlocked?.({
+        allowed: false,
+        action: 'readOnly',
+        command: 'git push origin main',
+        reason: 'Bash command blocked by read-only worker policy',
+      });
+      return {
+        success: false,
+        responseText: '',
+        error: 'Bash command blocked by read-only worker policy',
+      };
+    });
+    const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
+    const worker = createBot('worker-a', undefined, executeApiTask);
+    const managerService = createService([manager, worker]);
+
+    const task = await managerService.dispatchTask(scope, {
+      workerBotName: 'worker-a',
+      prompt: 'Review only',
+      taskTemplate: 'review',
+      waitTimeoutSeconds: 1,
+    });
+
+    expect(task.status).toBe('failed');
+    expect(managerService.getTask(scope, task.id, { includeEvents: true })?.events)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'action_gate_blocked',
+          payload: expect.objectContaining({
+            action: 'readOnly',
+            command: 'git push origin main',
+            mode: 'readOnly',
+          }),
+        }),
+      ]));
   });
 
   it('requires confirmation before exceeding workflow delegation budget', async () => {
@@ -760,7 +813,7 @@ describe('ManagerService', () => {
 
   it('does not let forbidden action words fail manager worker execution', async () => {
     const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
-      expect(options.actionGatePolicy).toBeUndefined();
+      expect(options.actionGatePolicy).toMatchObject({ forbiddenActions: ['train'] });
       return { success: true, responseText: workerResultText('done') };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
@@ -1086,6 +1139,7 @@ describe('ManagerService', () => {
         'queued',
         'trace_policy',
         'started',
+        'worker_permissions',
         'cancel_requested',
         'cancel_confirmed',
         'cancelled',

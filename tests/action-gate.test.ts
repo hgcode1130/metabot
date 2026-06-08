@@ -34,12 +34,29 @@ describe('action gate', () => {
     ).allowed).toBe(false);
   });
 
-  it('does not hard-block Bash commands only because the instruction contract is read-only', () => {
+  it('allows read-only Bash inspection commands', () => {
     expect(evaluateToolUseActionGate(
       { forbiddenActions: [], sideEffectClass: 'readOnly' },
       'Bash',
       { command: 'rg TODO src' },
     )).toEqual({ allowed: true });
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: [], sideEffectClass: 'readOnly' },
+      'Bash',
+      { command: 'timeout 60s npx tsc --noEmit' },
+    )).toEqual({ allowed: true });
+  });
+
+  it('blocks mutating Bash commands for read-only worker tasks', () => {
+    expect(evaluateToolUseActionGate(
+      { forbiddenActions: [], sideEffectClass: 'readOnly' },
+      'Bash',
+      { command: 'git push origin main' },
+    )).toMatchObject({
+      allowed: false,
+      action: 'readOnly',
+      reason: 'Bash command blocked by read-only worker policy',
+    });
   });
 
   it('does not block non-Bash tools', () => {

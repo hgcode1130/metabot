@@ -23,6 +23,18 @@ const TRAIN_PATTERNS = [
 
 const PUSH_PATTERNS = [/\bgit\s+push\b/i];
 const DELETE_PATTERNS = [/\brm\s+-[^\n;&|]*r/i, /\bgit\s+clean\s+-/i];
+const SHELL_CONTROL_OPERATOR_PATTERN = /[;&|<>`$]/;
+const SAFE_READ_ONLY_COMMAND_PATTERNS = [
+  /^(?:pwd|ls|cat|nl|wc)\b/,
+  /^rg\b/,
+  /^grep\b/,
+  /^sed\s+-n\b/,
+  /^git\s+(?:status|diff|show|log|grep|ls-files|branch|rev-parse|describe)\b/,
+  /^timeout\s+\d+s?\s+(?:npx\s+)?(?:vitest\b|tsc\s+--noEmit\b)/,
+  /^(?:npx\s+)?(?:vitest\b|tsc\s+--noEmit\b)/,
+  /^timeout\s+\d+s?\s+(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/,
+  /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/,
+];
 
 export function evaluateToolUseActionGate(
   policy: ActionGatePolicy | undefined,
@@ -30,11 +42,21 @@ export function evaluateToolUseActionGate(
   toolInput: unknown,
 ): ActionGateDecision {
   const actions = normalizeActions(policy?.forbiddenActions);
-  if (actions.length === 0) return { allowed: true };
   if (toolName !== 'Bash') return { allowed: true };
 
   const command = readCommand(toolInput);
   if (!command) return { allowed: true };
+
+  if (policy?.sideEffectClass === 'readOnly' && !isReadOnlyBashCommand(command)) {
+    return {
+      allowed: false,
+      action: 'readOnly',
+      command,
+      reason: 'Bash command blocked by read-only worker policy',
+    };
+  }
+
+  if (actions.length === 0) return { allowed: true };
 
   for (const action of actions) {
     if (matchesForbiddenAction(action, command)) {
@@ -47,6 +69,12 @@ export function evaluateToolUseActionGate(
     }
   }
   return { allowed: true };
+}
+
+function isReadOnlyBashCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed || SHELL_CONTROL_OPERATOR_PATTERN.test(trimmed)) return false;
+  return SAFE_READ_ONLY_COMMAND_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 export function denialHookOutput(decision: ActionGateDecision): Record<string, unknown> {
