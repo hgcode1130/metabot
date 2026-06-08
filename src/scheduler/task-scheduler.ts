@@ -30,7 +30,7 @@ export interface ScheduleMetadata {
 
 // --- One-time task types (unchanged) ---
 
-export interface ScheduledTask {
+export interface ScheduledTask extends ScheduleMetadata {
   id: string;
   botName: string;
   chatId: string;
@@ -74,7 +74,7 @@ export interface ScheduleUpdateInput {
 
 // --- Recurring task types ---
 
-export interface RecurringTask {
+export interface RecurringTask extends ScheduleMetadata {
   id: string;
   botName: string;
   chatId: string;
@@ -172,6 +172,7 @@ export class TaskScheduler {
       attemptCount: 0,
       maxAttempts: DEFAULT_MAX_ATTEMPTS,
       metadata: input.metadata,
+      ...scheduleTraceFields({ metadata: input.metadata }),
     };
 
     this.tasks.set(task.id, task);
@@ -251,6 +252,7 @@ export class TaskScheduler {
       createdAt: now,
       nextExecuteAt: nextMs,
       metadata: input.metadata,
+      ...scheduleTraceFields({ metadata: input.metadata }),
     };
 
     this.recurringTasks.set(recurring.id, recurring);
@@ -738,13 +740,32 @@ export class TaskScheduler {
 function readPersistedData(filePath: string): { taskList: ScheduledTask[]; recurringList: RecurringTask[] } {
   const raw = fs.readFileSync(filePath, 'utf-8');
   const parsed = JSON.parse(raw) as PersistedData | ScheduledTask[];
-  if (Array.isArray(parsed)) return { taskList: parsed, recurringList: [] };
+  if (Array.isArray(parsed)) return { taskList: parsed.map(normalizeScheduledTask), recurringList: [] };
   if (!parsed || typeof parsed !== 'object') {
     throw new Error(`Invalid scheduled tasks persistence data in ${filePath}`);
   }
   return {
-    taskList: parsed.tasks || [],
-    recurringList: parsed.recurringTasks || [],
+    taskList: (parsed.tasks || []).map(normalizeScheduledTask),
+    recurringList: (parsed.recurringTasks || []).map(normalizeRecurringTask),
+  };
+}
+
+function normalizeScheduledTask(task: ScheduledTask): ScheduledTask {
+  return { ...task, ...scheduleTraceFields(task) };
+}
+
+function normalizeRecurringTask(task: RecurringTask): RecurringTask {
+  return { ...task, ...scheduleTraceFields(task) };
+}
+
+function scheduleTraceFields(source: ScheduleMetadata & { metadata?: ScheduleMetadata }): ScheduleMetadata {
+  return {
+    origin: source.origin ?? source.metadata?.origin,
+    createdByBotName: source.createdByBotName ?? source.metadata?.createdByBotName,
+    createdByChatId: source.createdByChatId ?? source.metadata?.createdByChatId,
+    traceId: source.traceId ?? source.metadata?.traceId,
+    sideEffectClass: source.sideEffectClass ?? source.metadata?.sideEffectClass,
+    idempotencyKey: source.idempotencyKey ?? source.metadata?.idempotencyKey,
   };
 }
 

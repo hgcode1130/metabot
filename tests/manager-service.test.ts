@@ -109,6 +109,7 @@ function createScheduler(): {
         createdAt: Date.now(),
         retryCount: 0,
         metadata: input.metadata,
+        ...input.metadata,
       };
       oneTimeTasks.set(task.id, task);
       return task;
@@ -127,6 +128,7 @@ function createScheduler(): {
         createdAt: Date.now(),
         nextExecuteAt: Date.now() + 60_000,
         metadata: input.metadata,
+        ...input.metadata,
       };
       recurringTasks.set(task.id, task);
       return task;
@@ -1052,6 +1054,10 @@ describe('ManagerService', () => {
       chatId: 'chat-a',
       prompt: 'Remember this',
       label: 'Reminder label',
+      origin: 'manager-mcp',
+      createdByBotName: 'manager',
+      createdByChatId: 'chat-a',
+      traceId: 'trace-reminder',
       metadata: {
         origin: 'manager-mcp',
         createdByBotName: 'manager',
@@ -1087,6 +1093,12 @@ describe('ManagerService', () => {
     });
 
     expect(recurring).toMatchObject({ id: 'recur-1', type: 'recurring', cronExpr: '0 9 * * 1-5', timezone: 'Asia/Shanghai' });
+    expect(recurring).toMatchObject({
+      origin: 'manager-mcp',
+      createdByBotName: 'manager',
+      createdByChatId: 'chat-a',
+      traceId: expect.stringMatching(/^trace-/),
+    });
     expect(schedulerMocks.scheduler.scheduleRecurring).toHaveBeenCalledWith(expect.objectContaining({
       cronExpr: '0 9 * * 1-5',
       metadata: expect.objectContaining({ origin: 'manager-mcp' }),

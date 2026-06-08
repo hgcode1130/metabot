@@ -361,6 +361,77 @@ describe('TaskScheduler - Recurring Tasks', () => {
     scheduler.destroy();
   });
 
+  it('persists schedule trace fields at top level for one-time and recurring tasks', () => {
+    const metadata = {
+      origin: 'manager-mcp' as const,
+      createdByBotName: 'manager',
+      createdByChatId: 'chat-a',
+      traceId: 'trace-schedule',
+      sideEffectClass: 'readOnly' as const,
+      idempotencyKey: 'idem-1',
+    };
+    const scheduler1 = new TaskScheduler(createMockRegistry(), createMockLogger());
+
+    const oneTime = scheduler1.scheduleTask({
+      botName: 'manager', chatId: 'chat-a', prompt: 'one-time', delaySeconds: 60, metadata,
+    });
+    const recurring = scheduler1.scheduleRecurring({
+      botName: 'manager', chatId: 'chat-a', prompt: 'recurring', cronExpr: '0 8 * * *', metadata,
+    });
+
+    expect(oneTime).toMatchObject(metadata);
+    expect(recurring).toMatchObject(metadata);
+    scheduler1.destroy();
+
+    const scheduler2 = new TaskScheduler(createMockRegistry(), createMockLogger());
+    expect(scheduler2.listTasks()[0]).toMatchObject(metadata);
+    expect(scheduler2.listRecurringTasks()[0]).toMatchObject(metadata);
+    scheduler2.destroy();
+  });
+
+  it('backfills top-level trace fields when restoring metadata-only schedule records', () => {
+    const metadata = {
+      origin: 'manager-mcp' as const,
+      createdByBotName: 'manager',
+      createdByChatId: 'chat-a',
+      traceId: 'trace-old',
+    };
+    fs.mkdirSync(PERSIST_DIR, { recursive: true });
+    fs.writeFileSync(PERSIST_FILE, JSON.stringify({
+      tasks: [{
+        id: 'sched-old',
+        botName: 'manager',
+        chatId: 'chat-a',
+        prompt: 'old one-time',
+        executeAt: Date.now() + 60_000,
+        sendCards: true,
+        status: 'pending',
+        createdAt: Date.now(),
+        retryCount: 0,
+        metadata,
+      }],
+      recurringTasks: [{
+        id: 'recur-old',
+        botName: 'manager',
+        chatId: 'chat-a',
+        prompt: 'old recurring',
+        cronExpr: '0 8 * * *',
+        timezone: 'Asia/Shanghai',
+        sendCards: true,
+        status: 'active',
+        createdAt: Date.now(),
+        nextExecuteAt: Date.now() + 60_000,
+        metadata,
+      }],
+    }));
+
+    const scheduler = new TaskScheduler(createMockRegistry(), createMockLogger());
+
+    expect(scheduler.listTasks()[0]).toMatchObject(metadata);
+    expect(scheduler.listRecurringTasks()[0]).toMatchObject(metadata);
+    scheduler.destroy();
+  });
+
   it('retries transient scheduled task failures before final status', async () => {
     const executeApiTask = vi.fn()
       .mockResolvedValueOnce({ success: false, error: 'API Error: 429 rate_limit_error' })

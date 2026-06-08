@@ -137,6 +137,12 @@ export type ManagerReminder =
       status: ScheduledTask['status'];
       createdAt: number;
       metadata?: ScheduleMetadata;
+      origin?: ScheduleMetadata['origin'];
+      createdByBotName?: string;
+      createdByChatId?: string;
+      traceId?: string;
+      sideEffectClass?: SideEffectClass;
+      idempotencyKey?: string;
     }
   | {
       id: string;
@@ -157,6 +163,12 @@ export type ManagerReminder =
       status: RecurringTask['status'];
       createdAt: number;
       metadata?: ScheduleMetadata;
+      origin?: ScheduleMetadata['origin'];
+      createdByBotName?: string;
+      createdByChatId?: string;
+      traceId?: string;
+      sideEffectClass?: SideEffectClass;
+      idempotencyKey?: string;
     };
 
 export interface ManagerServiceOptions extends ManagerStoreOptions {
@@ -518,18 +530,13 @@ export class ManagerService {
 
   listReminders(scope: ManagerScope): ManagerReminder[] {
     this.requireManager(scope);
-    const ownedByScope = (metadata?: ScheduleMetadata) => (
-      metadata?.origin === 'manager-mcp'
-      && metadata.createdByBotName === scope.managerBotName
-      && metadata.createdByChatId === scope.managerChatId
-    );
 
     return [
       ...this.scheduler.listTasks()
-        .filter((task) => ownedByScope(task.metadata))
+        .filter((task) => reminderOwnedByScope(task, scope))
         .map(taskToReminder),
       ...this.scheduler.listRecurringTasks()
-        .filter((task) => ownedByScope(task.metadata))
+        .filter((task) => reminderOwnedByScope(task, scope))
         .map(recurringToReminder),
     ];
   }
@@ -1158,6 +1165,16 @@ function managerNotificationColor(status: ManagerTaskStatus): string {
   return 'orange';
 }
 
+function reminderOwnedByScope(
+  reminder: (ScheduledTask | RecurringTask) & ScheduleMetadata,
+  scope: ManagerScope,
+): boolean {
+  const trace = reminderTraceFields(reminder);
+  return trace.origin === 'manager-mcp'
+    && trace.createdByBotName === scope.managerBotName
+    && trace.createdByChatId === scope.managerChatId;
+}
+
 function taskToReminder(task: ScheduledTask): ManagerReminder {
   return {
     id: task.id,
@@ -1171,6 +1188,7 @@ function taskToReminder(task: ScheduledTask): ManagerReminder {
     status: task.status,
     createdAt: task.createdAt,
     metadata: task.metadata,
+    ...reminderTraceFields(task),
   };
 }
 
@@ -1194,5 +1212,17 @@ function recurringToReminder(task: RecurringTask): ManagerReminder {
     status: task.status,
     createdAt: task.createdAt,
     metadata: task.metadata,
+    ...reminderTraceFields(task),
+  };
+}
+
+function reminderTraceFields(reminder: (ScheduledTask | RecurringTask) & ScheduleMetadata): ScheduleMetadata {
+  return {
+    origin: reminder.origin ?? reminder.metadata?.origin,
+    createdByBotName: reminder.createdByBotName ?? reminder.metadata?.createdByBotName,
+    createdByChatId: reminder.createdByChatId ?? reminder.metadata?.createdByChatId,
+    traceId: reminder.traceId ?? reminder.metadata?.traceId,
+    sideEffectClass: reminder.sideEffectClass ?? reminder.metadata?.sideEffectClass,
+    idempotencyKey: reminder.idempotencyKey ?? reminder.metadata?.idempotencyKey,
   };
 }
