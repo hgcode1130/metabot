@@ -428,7 +428,7 @@ describe('ManagerService', () => {
     expect(manager.sender.sendTextNotice).toHaveBeenCalledWith(
       'chat-a',
       expect.stringContaining('failed'),
-      expect.stringContaining('Invalid worker result'),
+      expect.stringContaining('Substatus: result_invalid'),
       'red',
     );
   });
@@ -547,6 +547,9 @@ describe('ManagerService', () => {
     const task = await managerService.dispatchTask(scope, {
       workerBotName: 'worker-a',
       prompt: 'Implement P0-P1',
+      relatedTaskId: 'mgrtask-parent',
+      workflowId: 'wf-1',
+      sideEffectClass: 'readOnly',
       acceptanceCriteria: ['focused tests pass'],
       waitTimeoutSeconds: 1,
     });
@@ -569,9 +572,13 @@ describe('ManagerService', () => {
     expect(manager.sender.sendTextNotice).toHaveBeenCalledWith(
       'chat-a',
       expect.stringContaining('completed'),
-      expect.stringContaining('Summary: P0-P1 completed'),
+      expect.stringContaining('Workflow: wf-1'),
       'green',
     );
+    expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Related task: mgrtask-parent');
+    expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Side effects: readOnly');
+    expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Acceptance: worker_reported');
+    expect((manager.sender.sendTextNotice as any).mock.calls.at(-1)[2]).toContain('Summary: P0-P1 completed');
   });
 
   it('records notification failure without marking manager notified', async () => {

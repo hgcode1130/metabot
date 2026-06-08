@@ -219,6 +219,7 @@ interface RecordedWorkerResult {
 
 const DEFAULT_SESSION_KEY = 'default';
 const MAX_WAIT_TIMEOUT_SECONDS = 60;
+const NOTIFICATION_PREVIEW_LIMIT = 300;
 
 export class ManagerService {
   private readonly store: ManagerStore;
@@ -1209,7 +1210,19 @@ function managerNotificationBody(task: ManagerTask): string {
     `Trace: ${task.traceId}`,
     `Worker: ${task.workerBotName}`,
     `Status: ${task.status}`,
+    `Attempts: ${task.attemptCount}/${task.maxAttempts}`,
   ];
+  const workflowId = metadataString(task.metadata, 'workflowId');
+  const relatedTaskId = metadataString(task.metadata, 'relatedTaskId');
+  const sideEffectClass = metadataString(task.metadata, 'sideEffectClass');
+  const checkpoint = metadataString(task.metadata, 'lastCheckpointPreview');
+  if (task.metadata?.workerResultError) lines.push('Substatus: result_invalid');
+  if (workflowId) lines.push(`Workflow: ${workflowId}`);
+  if (relatedTaskId) lines.push(`Related task: ${relatedTaskId}`);
+  if (sideEffectClass) lines.push(`Side effects: ${sideEffectClass}`);
+  if (checkpoint) lines.push(`Last checkpoint: ${truncateNotice(checkpoint)}`);
+  const acceptance = acceptanceStatusLine(task.metadata);
+  if (acceptance) lines.push(acceptance);
   if (task.durationMs !== undefined) lines.push(`Duration: ${task.durationMs} ms`);
   if (task.costUsd !== undefined) lines.push(`Cost: $${task.costUsd}`);
   if (task.error) lines.push(`Error: ${task.error}`);
@@ -1220,6 +1233,22 @@ function managerNotificationBody(task: ManagerTask): string {
     lines.push('', task.resultText);
   }
   return lines.join('\n');
+}
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function acceptanceStatusLine(metadata: Record<string, unknown> | undefined): string | undefined {
+  const report = metadata?.acceptanceReport;
+  if (!report || typeof report !== 'object') return undefined;
+  const status = (report as Record<string, unknown>).status;
+  return typeof status === 'string' && status ? `Acceptance: ${status}` : undefined;
+}
+
+function truncateNotice(value: string): string {
+  return value.length <= NOTIFICATION_PREVIEW_LIMIT ? value : `${value.slice(0, NOTIFICATION_PREVIEW_LIMIT)}...`;
 }
 
 function workerResultNotificationLines(metadata: Record<string, unknown> | undefined): string[] {
