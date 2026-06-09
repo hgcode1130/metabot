@@ -15,37 +15,47 @@ export interface ActionGateDecision {
 }
 
 const TRAIN_PATTERNS = [
-  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?train\b/i,
-  /\b(?:python|python3)\b[^\n;&|]*\btrain(?:\.py|\b|_)/i,
-  /\b(?:torchrun|deepspeed|accelerate\s+launch)\b/i,
-  /\b(?:train|training|fine[-_ ]?tune)\b/i,
+  /(?:^|[;&|]\s*)(?:timeout\s+\d+s?\s+)?(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?train\b/i,
+  /(?:^|[;&|]\s*)(?:timeout\s+\d+s?\s+)?(?:python|python3)\b[^\n;&|]*(?:\s|\/)train(?:\.py|\s|$)/i,
+  /(?:^|[;&|]\s*)(?:timeout\s+\d+s?\s+)?(?:torchrun|deepspeed|accelerate\s+launch)\b/i,
+  /(?:^|[;&|]\s*)(?:timeout\s+\d+s?\s+)?(?:bash|sh)\b[^\n;&|]*(?:\s|\/)train(?:\.sh|\s|$)/i,
+  /(?:^|[;&|]\s*)(?:timeout\s+\d+s?\s+)?(?:\.\/|[\w./-]*\/)?train(?:\.sh|\s|$)/i,
+  /(?:^|[;&|]\s*)(?:timeout\s+\d+s?\s+)?make\s+train\b/i,
 ];
 
 const PUSH_PATTERNS = [/\bgit\s+push\b/i];
 const DELETE_PATTERNS = [/\brm\s+-[^\n;&|]*r/i, /\bgit\s+clean\s+-/i];
-const SCAN_ALL_PATTERNS = [
-  /^find\s+\./i,
-  /^git\s+grep\b/i,
-  /^ls\s+-[^\n]*R\b/i,
-];
+const SCAN_ALL_PATTERNS = [/^find\s+\./i, /^git\s+grep\b/i, /^ls\s+-[^\n]*R\b/i];
 const DEPLOY_PATTERNS = [
   /\bkubectl\s+(?:apply|rollout|scale|delete|patch)\b/i,
   /\bhelm\s+(?:install|upgrade|rollback|uninstall)\b/i,
   /\b(?:vercel|fly|netlify|wrangler)\s+(?:deploy|--prod)\b/i,
   /\bserverless\s+deploy\b/i,
 ];
-const SHELL_CONTROL_OPERATOR_PATTERN = /[;&|<>`$]/;
-const SAFE_READ_ONLY_COMMAND_PATTERNS = [
-  /^(?:pwd|ls|cat|nl|wc)\b/,
-  /^rg\b/,
-  /^grep\b/,
-  /^sed\s+-n\b/,
-  /^git\s+(?:status|diff|show|log|grep|ls-files|branch|rev-parse|describe)\b/,
-  /^timeout\s+\d+s?\s+(?:npx\s+)?(?:vitest\b|tsc\s+--noEmit\b)/,
-  /^(?:npx\s+)?(?:vitest\b|tsc\s+--noEmit\b)/,
-  /^timeout\s+\d+s?\s+(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/,
-  /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/,
+const INSTALL_PATTERNS = [
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|remove|update|publish)\b/i,
+  /\b(?:pip|pip3)\s+install\b/i,
+  /\b(?:python|python3)\s+-m\s+pip\s+install\b/i,
 ];
+const FILE_MUTATION_PATTERNS = [
+  /\b(?:chmod|chown|cp|ln|mkdir|mv|touch|truncate)\b/i,
+  /\bdd\s+\b/i,
+  /\btee\b/i,
+  /(?:^|\s)(?:>|>>)\s*(?!&|\/dev\/null\b)/,
+];
+const NETWORK_WRITE_PATTERNS = [
+  /\b(?:curl|wget)\b[^\n]*\b(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE)|--upload-file|-T)\b/i,
+];
+const READ_ONLY_MUTATION_PATTERNS = [
+  ...TRAIN_PATTERNS,
+  ...PUSH_PATTERNS,
+  ...DELETE_PATTERNS,
+  ...DEPLOY_PATTERNS,
+  ...INSTALL_PATTERNS,
+  ...FILE_MUTATION_PATTERNS,
+  ...NETWORK_WRITE_PATTERNS,
+];
+const SHELL_COMMAND_PATTERN = /^(?:\/usr\/bin\/env\s+)?(?:\/bin\/)?(?:bash|sh|zsh)\s+-l?c\s+(['"])([\s\S]*)\1$/i;
 
 export function evaluateToolUseActionGate(
   policy: ActionGatePolicy | undefined,
@@ -57,8 +67,9 @@ export function evaluateToolUseActionGate(
 
   const command = readCommand(toolInput);
   if (!command) return { allowed: true };
+  const inspectedCommand = unwrapShellCommand(command);
 
-  if (policy?.sideEffectClass === 'readOnly' && !isReadOnlyBashCommand(command)) {
+  if (policy?.sideEffectClass === 'readOnly' && !isReadOnlyBashCommand(inspectedCommand)) {
     return {
       allowed: false,
       action: 'readOnly',
@@ -70,7 +81,7 @@ export function evaluateToolUseActionGate(
   if (actions.length === 0) return { allowed: true };
 
   for (const action of actions) {
-    if (matchesForbiddenAction(action, command)) {
+    if (matchesForbiddenAction(action, inspectedCommand)) {
       return {
         allowed: false,
         action,
@@ -84,8 +95,14 @@ export function evaluateToolUseActionGate(
 
 function isReadOnlyBashCommand(command: string): boolean {
   const trimmed = command.trim();
-  if (!trimmed || SHELL_CONTROL_OPERATOR_PATTERN.test(trimmed)) return false;
-  return SAFE_READ_ONLY_COMMAND_PATTERNS.some((pattern) => pattern.test(trimmed));
+  if (!trimmed) return false;
+  return !READ_ONLY_MUTATION_PATTERNS.some((pattern) => pattern.test(trimmed));
+}
+
+function unwrapShellCommand(command: string): string {
+  const trimmed = command.trim();
+  const match = trimmed.match(SHELL_COMMAND_PATTERN);
+  return match?.[2] ?? trimmed;
 }
 
 export function denialHookOutput(decision: ActionGateDecision): Record<string, unknown> {
