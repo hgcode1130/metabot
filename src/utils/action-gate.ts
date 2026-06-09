@@ -32,29 +32,6 @@ const DEPLOY_PATTERNS = [
   /\b(?:vercel|fly|netlify|wrangler)\s+(?:deploy|--prod)\b/i,
   /\bserverless\s+deploy\b/i,
 ];
-const INSTALL_PATTERNS = [
-  /\b(?:npm|pnpm|yarn|bun)\s+(?:install|add|remove|update|publish)\b/i,
-  /\b(?:pip|pip3)\s+install\b/i,
-  /\b(?:python|python3)\s+-m\s+pip\s+install\b/i,
-];
-const FILE_MUTATION_PATTERNS = [
-  /\b(?:chmod|chown|cp|ln|mkdir|mv|touch|truncate)\b/i,
-  /\bdd\s+\b/i,
-  /\btee\b/i,
-  /(?:^|\s)(?:>|>>)\s*(?!&|\/dev\/null\b)/,
-];
-const NETWORK_WRITE_PATTERNS = [
-  /\b(?:curl|wget)\b[^\n]*\b(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s+(?:POST|PUT|PATCH|DELETE)|--upload-file|-T)\b/i,
-];
-const READ_ONLY_MUTATION_PATTERNS = [
-  ...TRAIN_PATTERNS,
-  ...PUSH_PATTERNS,
-  ...DELETE_PATTERNS,
-  ...DEPLOY_PATTERNS,
-  ...INSTALL_PATTERNS,
-  ...FILE_MUTATION_PATTERNS,
-  ...NETWORK_WRITE_PATTERNS,
-];
 const SHELL_COMMAND_PATTERN = /^(?:\/usr\/bin\/env\s+)?(?:\/bin\/)?(?:bash|sh|zsh)\s+-l?c\s+(['"])([\s\S]*)\1$/i;
 
 export function evaluateToolUseActionGate(
@@ -69,15 +46,6 @@ export function evaluateToolUseActionGate(
   if (!command) return { allowed: true };
   const inspectedCommand = unwrapShellCommand(command);
 
-  if (policy?.sideEffectClass === 'readOnly' && !isReadOnlyBashCommand(inspectedCommand)) {
-    return {
-      allowed: false,
-      action: 'readOnly',
-      command,
-      reason: 'Bash command blocked by read-only worker policy',
-    };
-  }
-
   if (actions.length === 0) return { allowed: true };
 
   for (const action of actions) {
@@ -91,12 +59,6 @@ export function evaluateToolUseActionGate(
     }
   }
   return { allowed: true };
-}
-
-function isReadOnlyBashCommand(command: string): boolean {
-  const trimmed = command.trim();
-  if (!trimmed) return false;
-  return !READ_ONLY_MUTATION_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 function unwrapShellCommand(command: string): string {

@@ -471,8 +471,8 @@ describe('ManagerService', () => {
       outputContractVersion: expect.any(String),
     });
     const callOptions = executeApiTask.mock.calls[0][0];
-    expect(callOptions.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
-    expect(callOptions.actionGatePolicy).toMatchObject({ sideEffectClass: 'readOnly' });
+    expect(callOptions.allowedTools).toBeUndefined();
+    expect(callOptions.actionGatePolicy).toBeUndefined();
     expect(callOptions.prompt).toContain('Template: review');
     expect(callOptions.prompt).toContain('Related task ID: mgrtask-related');
     expect(callOptions.prompt).toContain('Workflow ID: workflow-1');
@@ -510,7 +510,7 @@ describe('ManagerService', () => {
     });
   });
 
-  it('records read-only side effect class and applies read-only worker permissions', async () => {
+  it('records read-only side effect class without narrowing worker tools', async () => {
     const executeApiTask = vi.fn(async (_options: ApiTaskOptions): Promise<ApiTaskResult> => ({
       success: true,
       responseText: workerResultText('done'),
@@ -526,12 +526,8 @@ describe('ManagerService', () => {
       waitTimeoutSeconds: 1,
     });
 
-    expect(executeApiTask.mock.calls[0][0].allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
-    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toMatchObject({
-      sideEffectClass: 'readOnly',
-      taskId: task.id,
-      traceId: task.traceId,
-    });
+    expect(executeApiTask.mock.calls[0][0].allowedTools).toBeUndefined();
+    expect(executeApiTask.mock.calls[0][0].actionGatePolicy).toBeUndefined();
     expect(task.metadata?.sideEffectClass).toBe('readOnly');
     expect(task.metadata?.instructionContract).toMatchObject({
       sideEffectClass: 'readOnly',
@@ -653,18 +649,18 @@ describe('ManagerService', () => {
     expect(workflowLog?.summaryMarkdown).toContain(task.id);
   });
 
-  it('records read-only action gate blocks in the worker trace', async () => {
+  it('records explicit forbidden action gate blocks in the worker trace', async () => {
     const executeApiTask = vi.fn(async (options: ApiTaskOptions): Promise<ApiTaskResult> => {
       options.onActionGateBlocked?.({
         allowed: false,
-        action: 'readOnly',
+        action: 'push',
         command: 'git push origin main',
-        reason: 'Bash command blocked by read-only worker policy',
+        reason: 'Action blocked by instruction contract: push',
       });
       return {
         success: false,
         responseText: '',
-        error: 'Bash command blocked by read-only worker policy',
+        error: 'Action blocked by instruction contract: push',
       };
     });
     const manager = createBot('manager', { enabled: true, workers: ['worker-a'] });
@@ -673,7 +669,7 @@ describe('ManagerService', () => {
 
     const task = await managerService.dispatchTask(scope, {
       workerBotName: 'worker-a',
-      prompt: 'Review only',
+      prompt: 'Review only, do not push.',
       taskTemplate: 'review',
       waitTimeoutSeconds: 1,
     });
@@ -684,7 +680,7 @@ describe('ManagerService', () => {
         expect.objectContaining({
           type: 'action_gate_blocked',
           payload: expect.objectContaining({
-            action: 'readOnly',
+            action: 'push',
             command: 'git push origin main',
             mode: 'readOnly',
           }),

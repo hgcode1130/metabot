@@ -72,27 +72,32 @@ describe('action gate', () => {
       }),
     ).toMatchObject({
       allowed: false,
-      action: 'readOnly',
+      action: 'train',
     });
   });
 
-  it('blocks mutating Bash commands for read-only worker tasks', () => {
+  it('does not block Bash commands only because the worker task is read-only', () => {
     expect(
       evaluateToolUseActionGate({ forbiddenActions: [], sideEffectClass: 'readOnly' }, 'Bash', {
         command: 'git push origin main',
       }),
-    ).toMatchObject({
-      allowed: false,
-      action: 'readOnly',
-      reason: 'Bash command blocked by read-only worker policy',
-    });
+    ).toEqual({ allowed: true });
     expect(
       evaluateToolUseActionGate({ forbiddenActions: [], sideEffectClass: 'readOnly' }, 'Bash', {
         command: '/bin/bash -lc "git push origin main"',
       }),
+    ).toEqual({ allowed: true });
+  });
+
+  it('blocks explicit forbidden actions inside shell wrappers', () => {
+    expect(
+      evaluateToolUseActionGate({ forbiddenActions: ['push'], sideEffectClass: 'readOnly' }, 'Bash', {
+        command: '/bin/bash -lc "git push origin main"',
+      }),
     ).toMatchObject({
       allowed: false,
-      action: 'readOnly',
+      action: 'push',
+      reason: 'Action blocked by instruction contract: push',
     });
   });
 

@@ -17,14 +17,12 @@ export interface ManagerWorkerPermissionPlan {
   reason: string;
 }
 
-const READ_ONLY_ALLOWED_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'] as const;
-
 export function resolveManagerWorkerPermissions(
   input: ManagerWorkerPermissionInput,
 ): ManagerWorkerPermissionPlan {
   const template = normalizeWorkerTaskTemplate(input.taskTemplate);
   const readOnly = isReadOnlyWorkerTask(template, input.sideEffectClass);
-  const actionGatePolicy = buildActionGatePolicy(input, readOnly);
+  const actionGatePolicy = buildActionGatePolicy(input);
   if (!readOnly) {
     return {
       mode: 'default',
@@ -34,7 +32,6 @@ export function resolveManagerWorkerPermissions(
   }
   return {
     mode: 'readOnly',
-    allowedTools: [...READ_ONLY_ALLOWED_TOOLS],
     actionGatePolicy,
     reason: readOnlyReason(template, input.sideEffectClass),
   };
@@ -47,15 +44,12 @@ function isReadOnlyWorkerTask(
   return template === 'review' || template === 'audit' || sideEffectClass === 'readOnly';
 }
 
-function buildActionGatePolicy(
-  input: ManagerWorkerPermissionInput,
-  readOnly: boolean,
-): ActionGatePolicy | undefined {
+function buildActionGatePolicy(input: ManagerWorkerPermissionInput): ActionGatePolicy | undefined {
   const forbiddenActions = input.forbiddenActions ?? [];
-  if (!readOnly && forbiddenActions.length === 0) return undefined;
+  if (forbiddenActions.length === 0) return undefined;
   return {
     forbiddenActions,
-    sideEffectClass: readOnly ? 'readOnly' : input.sideEffectClass,
+    sideEffectClass: input.sideEffectClass,
     taskId: input.taskId,
     traceId: input.traceId,
   };
